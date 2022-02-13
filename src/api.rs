@@ -102,6 +102,16 @@ pub struct AssemblerState {
     fields: HashMap<String, Type>,
 }
 
+impl Default for AssemblerState {
+    fn default() -> Self {
+        Self {
+            name_next_id: Default::default(),
+            extern_funcs: Default::default(),
+            fields: Default::default(),
+        }
+    }
+}
+
 impl AssemblerState {
     pub fn fresh_name(&mut self, name: impl Into<String>) -> String {
         let name = name.into();
@@ -131,6 +141,14 @@ pub struct GeneratedFunction {
 
 pub struct Assembler {
     pub state: Arc<Mutex<AssemblerState>>,
+}
+
+impl Default for Assembler {
+    fn default() -> Self {
+        Self {
+            state: Arc::new(Default::default()),
+        }
+    }
 }
 
 impl Assembler {
@@ -210,7 +228,32 @@ impl FunctionBuilder {
             fields: &mut self.fields,
             state: &self.assembler_state,
             stmts: vec![],
+            while_state: None,
+            if_state: None,
+            fn_state: Some(GeneratedFunction {
+                name: self.name.clone(),
+                params: self.params.clone(),
+                body: vec![],
+                ret: self.ret.clone(),
+            }),
         }
+    }
+}
+
+pub struct WhileState {
+    condition: Expr,
+}
+
+pub struct IfElseState {
+    condition: Expr,
+    then_stmts: Vec<Stmt>,
+    in_then: bool,
+}
+
+impl IfElseState {
+    fn to_else(&mut self, then_stmts: Vec<Stmt>) {
+        self.then_stmts = then_stmts;
+        self.in_then = false;
     }
 }
 
@@ -218,28 +261,92 @@ pub struct CodeBlock<'a> {
     fields: &'a mut VecDeque<HashMap<String, Type>>,
     state: &'a Arc<Mutex<AssemblerState>>,
     stmts: Vec<Stmt>,
+    while_state: Option<WhileState>,
+    if_state: Option<IfElseState>,
+    fn_state: Option<GeneratedFunction>,
 }
 
 impl<'a> CodeBlock<'a> {
+    pub fn new_from(&mut self) -> CodeBlock {
+        CodeBlock {
+            fields: &mut self.fields,
+            state: &self.state,
+            stmts: vec![],
+            while_state: None,
+            if_state: None,
+            fn_state: None,
+        }
+    }
+
     pub fn enter_block(&mut self) -> CodeBlock {
         self.fields.push_back(HashMap::new());
         CodeBlock {
             fields: &mut self.fields,
             state: &self.state,
             stmts: vec![],
+            while_state: None,
+            if_state: None,
+            fn_state: None,
         }
     }
 
-    pub fn leave(mut self) -> Vec<Stmt> {
+    pub fn build(&mut self) -> GeneratedFunction {
+        let mut gen = self.fn_state.take().unwrap();
+        gen.body = self.stmts.drain(..).collect::<Vec<_>>();
+        gen
+    }
+
+    pub fn leave(&mut self) -> Result<()> {
         self.fields.pop_back();
-        self.stmts
+        if let Some(ref mut while_state) = self.while_state {
+            let WhileState { condition } = while_state;
+            let stmts = self.stmts.drain(..).collect::<Vec<_>>();
+            self.stmts
+                .push(Stmt::WhileLoop(Box::new(condition.clone()), stmts));
+        }
+
+        if let Some(ref mut if_state) = self.if_state {
+            let IfElseState {
+                condition,
+                then_stmts,
+                in_then,
+            } = if_state;
+            if *in_then {
+                assert!(then_stmts.is_empty());
+                let stmts = self.stmts.drain(..).collect::<Vec<_>>();
+                self.stmts
+                    .push(Stmt::IfElse(Box::new(condition.clone()), stmts, Vec::new()));
+            } else {
+                assert!(!then_stmts.is_empty());
+                let then_stmts = then_stmts.drain(..).collect::<Vec<_>>();
+                let else_stmts = self.stmts.drain(..).collect::<Vec<_>>();
+                self.stmts.push(Stmt::IfElse(
+                    Box::new(condition.clone()),
+                    then_stmts,
+                    else_stmts,
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn enter_else(&mut self) {
+        self.fields.pop_back();
+        self.fields.push_back(HashMap::new());
+        assert!(self.if_state.is_some() && self.if_state.as_ref().unwrap().in_then);
+        let new_then = self.stmts.drain(..).collect::<Vec<_>>();
+        match self.if_state.iter_mut().next() {
+            Some(s) => s.to_else(new_then),
+            None => {}
+        }
     }
 
     pub fn declare(&mut self, name: impl Into<String>, ty: Type) -> Result<()> {
         let name = name.into();
         let type_ = self.fields.back().unwrap().get(&name);
         match type_ {
-            Some(type_) => err!("Variable {} of {} already exists", name, type_),
+            Some(type_) => err!("Variable {} of {} already exists in the current scope", name, type_),
             None => {
                 self.fields.back_mut().unwrap().insert(name.clone(), ty);
                 self.stmts.push(Stmt::Declare(name, ty));
@@ -248,12 +355,24 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
+    fn find_type(&self, name: impl Into<String>) -> Option<Type> {
+        let name = name.into();
+        for scope in self.fields.iter().rev() {
+            let type_ = scope.get(&name);
+            match type_ {
+                Some(type_) => return Some(*type_),
+                None => {}
+            }
+        }
+        None
+    }
+
     pub fn assign(&mut self, name: impl Into<String>, expr: Expr) -> Result<()> {
         let name = name.into();
-        let type_ = self.fields.back().unwrap().get(&name);
+        let type_ = self.find_type(&name);
         match type_ {
             Some(type_) => {
-                if type_ != &expr.type_ {
+                if type_ != expr.type_ {
                     err!(
                         "Variable {} of {} cannot be assigned to {}",
                         name,
@@ -274,7 +393,7 @@ impl<'a> CodeBlock<'a> {
         let type_ = self.fields.back().unwrap().get(&name);
         match type_ {
             Some(type_) => {
-                err!("Variable {} of {} already exists", name, type_)
+                err!("Variable {} of {} already exists in the current scope", name, type_)
             }
             None => {
                 self.fields
@@ -293,8 +412,7 @@ impl<'a> CodeBlock<'a> {
         Ok(())
     }
 
-    // TODO: open while block
-    pub fn while_loop(&mut self, cond: Expr, body: Vec<Stmt>) -> Result<CodeBlock> {
+    pub fn while_loop(&mut self, cond: Expr) -> Result<CodeBlock> {
         if cond.type_ != BOOL {
             err!("while condition must be bool")
         } else {
@@ -303,16 +421,30 @@ impl<'a> CodeBlock<'a> {
                 fields: &mut self.fields,
                 state: &self.state,
                 stmts: vec![],
+                while_state: Some(WhileState { condition: cond }),
+                if_state: None,
+                fn_state: None,
             })
         }
     }
 
-    // TODO: open then block and else block
-    pub fn if_else(&self, cond: Expr, body: Vec<Stmt>, else_body: Vec<Stmt>) -> Result<Stmt> {
+    pub fn if_else(&mut self, cond: Expr) -> Result<CodeBlock> {
         if cond.type_ != BOOL {
             err!("if condition must be bool")
         } else {
-            Ok(Stmt::IfElse(Box::new(cond), body, else_body))
+            self.fields.push_back(HashMap::new());
+            Ok(CodeBlock {
+                fields: &mut self.fields,
+                state: &self.state,
+                stmts: vec![],
+                while_state: None,
+                if_state: Some(IfElseState {
+                    condition: cond,
+                    then_stmts: vec![],
+                    in_then: true,
+                }),
+                fn_state: None,
+            })
         }
     }
 
@@ -322,15 +454,10 @@ impl<'a> CodeBlock<'a> {
 
     pub fn id(&self, name: impl Into<String>) -> Result<Expr> {
         let name = name.into();
-
-        for scope in self.fields.iter().rev() {
-            let type_ = scope.get(&name);
-            match type_ {
-                Some(type_) => return Ok(Expr::new(ExprCode::Identifier(name), *type_)),
-                None => {}
-            }
+        match self.find_type(&name) {
+            None => err!("unknown identifier: {}", name),
+            Some(type_) => return Ok(Expr::new(ExprCode::Identifier(name), type_))
         }
-        err!("unknown identifier: {}", name)
     }
 
     pub fn equal(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
