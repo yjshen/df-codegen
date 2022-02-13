@@ -1,4 +1,4 @@
-mod assembler;
+mod api;
 mod error;
 
 #[cfg(test)]
