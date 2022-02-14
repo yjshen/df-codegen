@@ -1,4 +1,5 @@
 use crate::error::{DataFusionError, Result};
+use crate::jit::JIT;
 use cranelift::codegen::ir;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -32,7 +33,7 @@ pub enum Stmt {
 
 #[derive(Clone, Debug)]
 pub struct Expr {
-    code: ExprCode,
+    pub(crate) code: ExprCode,
     type_: Type,
 }
 
@@ -60,7 +61,7 @@ pub enum ExprCode {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Type(ir::Type, u8);
+pub struct Type(pub(crate) ir::Type, pub(crate) u8);
 pub const NIL: Type = Type(ir::types::INVALID, 0);
 pub const BOOL: Type = Type(ir::types::B1, 1);
 pub const I8: Type = Type(ir::types::I8, 2);
@@ -147,6 +148,17 @@ impl Assembler {
     pub fn new_func_builder(&self, name: impl Into<String>) -> FunctionBuilder {
         let name = self.state.lock().fresh_name(name);
         FunctionBuilder::new(name, self.state.clone())
+    }
+
+    pub fn create_jit(&self) -> JIT {
+        let symbols = self
+            .state
+            .lock()
+            .extern_funcs
+            .values()
+            .map(|s| (s.name.clone(), s.code))
+            .collect::<Vec<_>>();
+        JIT::new(symbols)
     }
 }
 

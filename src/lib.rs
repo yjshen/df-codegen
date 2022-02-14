@@ -1,10 +1,12 @@
 mod api;
 mod error;
+mod jit;
 
 #[cfg(test)]
 mod tests {
-    use crate::api::{Assembler, I64};
+    use crate::api::{Assembler, GeneratedFunction, I64};
     use crate::error::Result;
+    use crate::jit::JIT;
 
     #[test]
     fn iterative_fib() -> Result<()> {
@@ -55,7 +57,32 @@ mod tests {
         )?;
 
         let gen_func = fn_body.build();
-        println!("{}", gen_func);
+        println!("{}", &gen_func);
+        let mut jit = assembler.create_jit();
+        println!(
+            "fib({}) result: {}",
+            10,
+            run_iterative_fib_code(&mut jit, gen_func, 10)?
+        );
         Ok(())
+    }
+
+    unsafe fn run_code<I, O>(jit: &mut JIT, code: GeneratedFunction, input: I) -> Result<O> {
+        // Pass the string to the JIT, and it returns a raw pointer to machine code.
+        let code_ptr = jit.compile(code)?;
+        // Cast the raw pointer to a typed function pointer. This is unsafe, because
+        // this is the critical point where you have to trust that the generated code
+        // is safe to be called.
+        let code_fn = core::mem::transmute::<_, fn(I) -> O>(code_ptr);
+        // And now we can call it!
+        Ok(code_fn(input))
+    }
+
+    fn run_iterative_fib_code(
+        jit: &mut JIT,
+        code: GeneratedFunction,
+        input: isize,
+    ) -> Result<isize> {
+        unsafe { run_code(jit, code, input) }
     }
 }
