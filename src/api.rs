@@ -3,6 +3,7 @@ use cranelift::codegen::ir;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -14,10 +15,87 @@ pub enum Stmt {
     Declare(String, Type),
 }
 
+impl Stmt {
+    /// print the statement with indentation
+    pub fn fmt(&self, ident: usize, f: &mut Formatter) -> std::fmt::Result {
+        let mut ident_str = String::new();
+        for _ in 0..ident {
+            ident_str.push_str(" ");
+        }
+        match self {
+            Stmt::IfElse(cond, then_stmts, else_stmts) => {
+                writeln!(f, "{}if {} {{", ident_str, cond)?;
+                for stmt in then_stmts {
+                    stmt.fmt(ident + 4, f)?;
+                }
+                writeln!(f, "{}}} else {{", ident_str)?;
+                for stmt in else_stmts {
+                    stmt.fmt(ident + 4, f)?;
+                }
+                writeln!(f, "{}}}", ident_str)
+            }
+            Stmt::WhileLoop(cond, stmts) => {
+                writeln!(f, "{}while {} {{", ident_str, cond)?;
+                for stmt in stmts {
+                    stmt.fmt(ident + 4, f)?;
+                }
+                writeln!(f, "{}}}", ident_str)
+            }
+            Stmt::Assign(name, expr) => {
+                writeln!(f, "{}{} = {};", ident_str, name, expr)
+            }
+            Stmt::SideEffect(expr) => {
+                writeln!(f, "{}{};", ident_str, expr)
+            }
+            Stmt::Declare(name, ty) => {
+                writeln!(f, "{}let {}: {};", ident_str, name, ty)
+            }
+        }
+    }
+}
+
+impl Display for Stmt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.fmt(0, f);
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Expr {
     code: ExprCode,
     type_: Type,
+}
+
+impl Display for Expr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match &self.code {
+            ExprCode::Literal(lit) => write!(f, "{}", lit),
+            ExprCode::Identifier(name) => write!(f, "{}", name),
+            ExprCode::Eq(lhs, rhs) => write!(f, "{} == {}", lhs, rhs),
+            ExprCode::Ne(lhs, rhs) => write!(f, "{} != {}", lhs, rhs),
+            ExprCode::Lt(lhs, rhs) => write!(f, "{} < {}", lhs, rhs),
+            ExprCode::Le(lhs, rhs) => write!(f, "{} <= {}", lhs, rhs),
+            ExprCode::Gt(lhs, rhs) => write!(f, "{} > {}", lhs, rhs),
+            ExprCode::Ge(lhs, rhs) => write!(f, "{} >= {}", lhs, rhs),
+            ExprCode::Add(lhs, rhs) => write!(f, "{} + {}", lhs, rhs),
+            ExprCode::Sub(lhs, rhs) => write!(f, "{} - {}", lhs, rhs),
+            ExprCode::Mul(lhs, rhs) => write!(f, "{} * {}", lhs, rhs),
+            ExprCode::Div(lhs, rhs) => write!(f, "{} / {}", lhs, rhs),
+            ExprCode::Call(name, exprs) => {
+                write!(
+                    f,
+                    "{}({})",
+                    name,
+                    exprs
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+    }
 }
 
 impl Expr {
@@ -267,9 +345,15 @@ pub struct CodeBlock<'a> {
 
 impl<'a> CodeBlock<'a> {
     pub fn build(&mut self) -> GeneratedFunction {
-        assert!(self.fn_state.is_some(), "Calling build on a non function block");
+        assert!(
+            self.fn_state.is_some(),
+            "Calling build on a non function block"
+        );
         let mut gen = self.fn_state.take().unwrap();
         gen.body = self.stmts.drain(..).collect::<Vec<_>>();
+        for x in gen.body.iter() {
+            println!("{}", x);
+        }
         gen
     }
 
@@ -434,6 +518,35 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
+    pub fn if_block<C, T, E>(&mut self, mut cond: C, mut then_blk: T, mut else_blk: E) -> Result<()>
+    where
+        C: FnMut(&mut CodeBlock) -> Result<Expr>,
+        T: FnMut(&mut CodeBlock) -> Result<()>,
+        E: FnMut(&mut CodeBlock) -> Result<()>,
+    {
+        let cond = cond(self)?;
+        let mut body = self.if_else(cond)?;
+        then_blk(&mut body)?;
+        body.enter_else();
+        else_blk(&mut body)?;
+        let if_else = body.leave()?;
+        self.stmts.push(if_else);
+        Ok(())
+    }
+
+    pub fn while_block<C, B>(&mut self, mut cond: C, mut body_blk: B) -> Result<()>
+    where
+        C: FnMut(&mut CodeBlock) -> Result<Expr>,
+        B: FnMut(&mut CodeBlock) -> Result<()>,
+    {
+        let cond = cond(self)?;
+        let mut body = self.while_loop(cond)?;
+        body_blk(&mut body)?;
+        let while_stmt = body.leave()?;
+        self.stmts.push(while_stmt);
+        Ok(())
+    }
+
     pub fn lit(&self, val: impl Into<String>, ty: Type) -> Expr {
         Expr::new(ExprCode::Literal(val.into()), ty)
     }
@@ -446,7 +559,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn equal(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
+    pub fn eq(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.type_ != rhs.type_ {
             err!("cannot compare {} and {}", lhs.type_, rhs.type_)
         } else {
@@ -454,7 +567,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn not_equal(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
+    pub fn ne(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.type_ != rhs.type_ {
             err!("cannot compare {} and {}", lhs.type_, rhs.type_)
         } else {
@@ -462,7 +575,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn less(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
+    pub fn lt(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.type_ != rhs.type_ {
             err!("cannot compare {} and {}", lhs.type_, rhs.type_)
         } else {
@@ -470,7 +583,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn less_equal(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
+    pub fn le(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.type_ != rhs.type_ {
             err!("cannot compare {} and {}", lhs.type_, rhs.type_)
         } else {
@@ -478,7 +591,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn greater(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
+    pub fn gt(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.type_ != rhs.type_ {
             err!("cannot compare {} and {}", lhs.type_, rhs.type_)
         } else {
@@ -486,7 +599,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn greater_equal(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
+    pub fn ge(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.type_ != rhs.type_ {
             err!("cannot compare {} and {}", lhs.type_, rhs.type_)
         } else {
@@ -506,7 +619,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn subtract(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
+    pub fn sub(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.type_ != rhs.type_ {
             err!("cannot subtract {} and {}", lhs.type_, rhs.type_)
         } else {
@@ -518,7 +631,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn multiply(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
+    pub fn mul(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.type_ != rhs.type_ {
             err!("cannot multiply {} and {}", lhs.type_, rhs.type_)
         } else {
@@ -530,7 +643,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn divide(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
+    pub fn div(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.type_ != rhs.type_ {
             err!("cannot divide {} and {}", lhs.type_, rhs.type_)
         } else {
