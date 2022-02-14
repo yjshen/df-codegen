@@ -6,6 +6,21 @@ use std::collections::VecDeque;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 
+struct ExternFuncSignature {
+    name: String,
+    code: *const u8,
+    params: Vec<Type>,
+    returns: Option<Type>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GeneratedFunction {
+    pub name: String,
+    pub params: Vec<(String, Type)>,
+    pub body: Vec<Stmt>,
+    pub ret: Option<(String, Type)>,
+}
+
 #[derive(Clone, Debug)]
 pub enum Stmt {
     IfElse(Box<Expr>, Vec<Stmt>, Vec<Stmt>),
@@ -15,87 +30,10 @@ pub enum Stmt {
     Declare(String, Type),
 }
 
-impl Stmt {
-    /// print the statement with indentation
-    pub fn fmt(&self, ident: usize, f: &mut Formatter) -> std::fmt::Result {
-        let mut ident_str = String::new();
-        for _ in 0..ident {
-            ident_str.push_str(" ");
-        }
-        match self {
-            Stmt::IfElse(cond, then_stmts, else_stmts) => {
-                writeln!(f, "{}if {} {{", ident_str, cond)?;
-                for stmt in then_stmts {
-                    stmt.fmt(ident + 4, f)?;
-                }
-                writeln!(f, "{}}} else {{", ident_str)?;
-                for stmt in else_stmts {
-                    stmt.fmt(ident + 4, f)?;
-                }
-                writeln!(f, "{}}}", ident_str)
-            }
-            Stmt::WhileLoop(cond, stmts) => {
-                writeln!(f, "{}while {} {{", ident_str, cond)?;
-                for stmt in stmts {
-                    stmt.fmt(ident + 4, f)?;
-                }
-                writeln!(f, "{}}}", ident_str)
-            }
-            Stmt::Assign(name, expr) => {
-                writeln!(f, "{}{} = {};", ident_str, name, expr)
-            }
-            Stmt::SideEffect(expr) => {
-                writeln!(f, "{}{};", ident_str, expr)
-            }
-            Stmt::Declare(name, ty) => {
-                writeln!(f, "{}let {}: {};", ident_str, name, ty)
-            }
-        }
-    }
-}
-
-impl Display for Stmt {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.fmt(0, f);
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct Expr {
     code: ExprCode,
     type_: Type,
-}
-
-impl Display for Expr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match &self.code {
-            ExprCode::Literal(lit) => write!(f, "{}", lit),
-            ExprCode::Identifier(name) => write!(f, "{}", name),
-            ExprCode::Eq(lhs, rhs) => write!(f, "{} == {}", lhs, rhs),
-            ExprCode::Ne(lhs, rhs) => write!(f, "{} != {}", lhs, rhs),
-            ExprCode::Lt(lhs, rhs) => write!(f, "{} < {}", lhs, rhs),
-            ExprCode::Le(lhs, rhs) => write!(f, "{} <= {}", lhs, rhs),
-            ExprCode::Gt(lhs, rhs) => write!(f, "{} > {}", lhs, rhs),
-            ExprCode::Ge(lhs, rhs) => write!(f, "{} >= {}", lhs, rhs),
-            ExprCode::Add(lhs, rhs) => write!(f, "{} + {}", lhs, rhs),
-            ExprCode::Sub(lhs, rhs) => write!(f, "{} - {}", lhs, rhs),
-            ExprCode::Mul(lhs, rhs) => write!(f, "{} * {}", lhs, rhs),
-            ExprCode::Div(lhs, rhs) => write!(f, "{} / {}", lhs, rhs),
-            ExprCode::Call(name, exprs) => {
-                write!(
-                    f,
-                    "{}({})",
-                    name,
-                    exprs
-                        .iter()
-                        .map(|e| e.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
-        }
-    }
 }
 
 impl Expr {
@@ -134,47 +72,6 @@ pub const F64: Type = Type(ir::types::F64, 7);
 pub const R32: Type = Type(ir::types::R32, 8);
 pub const R64: Type = Type(ir::types::R64, 9);
 
-impl std::fmt::Display for Type {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::fmt::Debug for Type {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.1 {
-            0 => write!(f, "nil"),
-            1 => write!(f, "bool"),
-            2 => write!(f, "i8"),
-            3 => write!(f, "i16"),
-            4 => write!(f, "i32"),
-            5 => write!(f, "i64"),
-            6 => write!(f, "f32"),
-            7 => write!(f, "f64"),
-            8 => write!(f, "small_ptr"),
-            9 => write!(f, "ptr"),
-            _ => write!(f, "unknown"),
-        }
-    }
-}
-
-impl From<&str> for Type {
-    fn from(x: &str) -> Self {
-        match x {
-            "bool" => BOOL,
-            "i8" => I8,
-            "i16" => I16,
-            "i32" => I32,
-            "i64" => I64,
-            "f32" => F32,
-            "f64" => F64,
-            "small_ptr" => R32,
-            "ptr" => R64,
-            _ => panic!("unknown type: {}", x),
-        }
-    }
-}
-
 pub struct AssemblerState {
     name_next_id: HashMap<String, u8>,
     extern_funcs: HashMap<String, ExternFuncSignature>,
@@ -207,13 +104,6 @@ macro_rules! err {
     ($($arg:tt)*) => {
         Err(DataFusionError::Internal(format!($($arg)*)))
     };
-}
-
-pub struct GeneratedFunction {
-    pub name: String,
-    pub params: Vec<(String, Type)>,
-    pub body: Vec<Stmt>,
-    pub ret: Option<(String, Type)>,
 }
 
 pub struct Assembler {
@@ -351,9 +241,6 @@ impl<'a> CodeBlock<'a> {
         );
         let mut gen = self.fn_state.take().unwrap();
         gen.body = self.stmts.drain(..).collect::<Vec<_>>();
-        for x in gen.body.iter() {
-            println!("{}", x);
-        }
         gen
     }
 
@@ -679,9 +566,143 @@ impl<'a> CodeBlock<'a> {
     }
 }
 
-struct ExternFuncSignature {
-    name: String,
-    code: *const u8,
-    params: Vec<Type>,
-    returns: Option<Type>,
+impl Display for GeneratedFunction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fn {}(", self.name)?;
+        for (i, (name, ty)) in self.params.iter().enumerate() {
+            if i != 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}: {}", name, ty)?;
+        }
+        write!(f, ") -> ")?;
+        if let Some((name, ty)) = &self.ret {
+            write!(f, "{}: {}", name, ty)?;
+        } else {
+            write!(f, "()")?;
+        }
+        write!(f, " {{\n")?;
+        for stmt in &self.body {
+            stmt.fmt_ident(4, f)?;
+        }
+        write!(f, "}}")
+    }
+}
+
+impl Stmt {
+    /// print the statement with indentation
+    pub fn fmt_ident(&self, ident: usize, f: &mut Formatter) -> std::fmt::Result {
+        let mut ident_str = String::new();
+        for _ in 0..ident {
+            ident_str.push_str(" ");
+        }
+        match self {
+            Stmt::IfElse(cond, then_stmts, else_stmts) => {
+                writeln!(f, "{}if {} {{", ident_str, cond)?;
+                for stmt in then_stmts {
+                    stmt.fmt_ident(ident + 4, f)?;
+                }
+                writeln!(f, "{}}} else {{", ident_str)?;
+                for stmt in else_stmts {
+                    stmt.fmt_ident(ident + 4, f)?;
+                }
+                writeln!(f, "{}}}", ident_str)
+            }
+            Stmt::WhileLoop(cond, stmts) => {
+                writeln!(f, "{}while {} {{", ident_str, cond)?;
+                for stmt in stmts {
+                    stmt.fmt_ident(ident + 4, f)?;
+                }
+                writeln!(f, "{}}}", ident_str)
+            }
+            Stmt::Assign(name, expr) => {
+                writeln!(f, "{}{} = {};", ident_str, name, expr)
+            }
+            Stmt::SideEffect(expr) => {
+                writeln!(f, "{}{};", ident_str, expr)
+            }
+            Stmt::Declare(name, ty) => {
+                writeln!(f, "{}let {}: {};", ident_str, name, ty)
+            }
+        }
+    }
+}
+
+impl Display for Stmt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.fmt_ident(0, f)?;
+        Ok(())
+    }
+}
+
+impl Display for Expr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match &self.code {
+            ExprCode::Literal(lit) => write!(f, "{}", lit),
+            ExprCode::Identifier(name) => write!(f, "{}", name),
+            ExprCode::Eq(lhs, rhs) => write!(f, "{} == {}", lhs, rhs),
+            ExprCode::Ne(lhs, rhs) => write!(f, "{} != {}", lhs, rhs),
+            ExprCode::Lt(lhs, rhs) => write!(f, "{} < {}", lhs, rhs),
+            ExprCode::Le(lhs, rhs) => write!(f, "{} <= {}", lhs, rhs),
+            ExprCode::Gt(lhs, rhs) => write!(f, "{} > {}", lhs, rhs),
+            ExprCode::Ge(lhs, rhs) => write!(f, "{} >= {}", lhs, rhs),
+            ExprCode::Add(lhs, rhs) => write!(f, "{} + {}", lhs, rhs),
+            ExprCode::Sub(lhs, rhs) => write!(f, "{} - {}", lhs, rhs),
+            ExprCode::Mul(lhs, rhs) => write!(f, "{} * {}", lhs, rhs),
+            ExprCode::Div(lhs, rhs) => write!(f, "{} / {}", lhs, rhs),
+            ExprCode::Call(name, exprs) => {
+                write!(
+                    f,
+                    "{}({})",
+                    name,
+                    exprs
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::fmt::Debug for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.1 {
+            0 => write!(f, "nil"),
+            1 => write!(f, "bool"),
+            2 => write!(f, "i8"),
+            3 => write!(f, "i16"),
+            4 => write!(f, "i32"),
+            5 => write!(f, "i64"),
+            6 => write!(f, "f32"),
+            7 => write!(f, "f64"),
+            8 => write!(f, "small_ptr"),
+            9 => write!(f, "ptr"),
+            _ => write!(f, "unknown"),
+        }
+    }
+}
+
+impl From<&str> for Type {
+    fn from(x: &str) -> Self {
+        match x {
+            "bool" => BOOL,
+            "i8" => I8,
+            "i16" => I16,
+            "i32" => I32,
+            "i64" => I64,
+            "f32" => F32,
+            "f64" => F64,
+            "small_ptr" => R32,
+            "ptr" => R64,
+            _ => panic!("unknown type: {}", x),
+        }
+    }
 }

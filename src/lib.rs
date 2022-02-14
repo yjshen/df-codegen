@@ -55,6 +55,7 @@ mod tests {
         )?;
 
         let gen_func = fn_body.build();
+        println!("{}", gen_func);
         Ok(())
     }
 }
