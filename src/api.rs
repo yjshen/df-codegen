@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+#[derive(Clone, Debug)]
 pub enum Stmt {
     IfElse(Box<Expr>, Vec<Stmt>, Vec<Stmt>),
     WhileLoop(Box<Expr>, Vec<Stmt>),
@@ -99,7 +100,6 @@ impl From<&str> for Type {
 pub struct AssemblerState {
     name_next_id: HashMap<String, u8>,
     extern_funcs: HashMap<String, ExternFuncSignature>,
-    fields: HashMap<String, Type>,
 }
 
 impl Default for AssemblerState {
@@ -107,7 +107,6 @@ impl Default for AssemblerState {
         Self {
             name_next_id: Default::default(),
             extern_funcs: Default::default(),
-            fields: Default::default(),
         }
     }
 }
@@ -267,42 +266,23 @@ pub struct CodeBlock<'a> {
 }
 
 impl<'a> CodeBlock<'a> {
-    pub fn new_from(&mut self) -> CodeBlock {
-        CodeBlock {
-            fields: &mut self.fields,
-            state: &self.state,
-            stmts: vec![],
-            while_state: None,
-            if_state: None,
-            fn_state: None,
-        }
-    }
-
-    pub fn enter_block(&mut self) -> CodeBlock {
-        self.fields.push_back(HashMap::new());
-        CodeBlock {
-            fields: &mut self.fields,
-            state: &self.state,
-            stmts: vec![],
-            while_state: None,
-            if_state: None,
-            fn_state: None,
-        }
-    }
-
     pub fn build(&mut self) -> GeneratedFunction {
+        assert!(self.fn_state.is_some(), "Calling build on a non function block");
         let mut gen = self.fn_state.take().unwrap();
         gen.body = self.stmts.drain(..).collect::<Vec<_>>();
         gen
     }
 
-    pub fn leave(&mut self) -> Result<()> {
+    pub fn push(&mut self, stmt: Stmt) {
+        self.stmts.push(stmt)
+    }
+
+    pub fn leave(&mut self) -> Result<Stmt> {
         self.fields.pop_back();
         if let Some(ref mut while_state) = self.while_state {
             let WhileState { condition } = while_state;
             let stmts = self.stmts.drain(..).collect::<Vec<_>>();
-            self.stmts
-                .push(Stmt::WhileLoop(Box::new(condition.clone()), stmts));
+            return Ok(Stmt::WhileLoop(Box::new(condition.clone()), stmts));
         }
 
         if let Some(ref mut if_state) = self.if_state {
@@ -311,24 +291,22 @@ impl<'a> CodeBlock<'a> {
                 then_stmts,
                 in_then,
             } = if_state;
-            if *in_then {
+            return if *in_then {
                 assert!(then_stmts.is_empty());
                 let stmts = self.stmts.drain(..).collect::<Vec<_>>();
-                self.stmts
-                    .push(Stmt::IfElse(Box::new(condition.clone()), stmts, Vec::new()));
+                Ok(Stmt::IfElse(Box::new(condition.clone()), stmts, Vec::new()))
             } else {
                 assert!(!then_stmts.is_empty());
                 let then_stmts = then_stmts.drain(..).collect::<Vec<_>>();
                 let else_stmts = self.stmts.drain(..).collect::<Vec<_>>();
-                self.stmts.push(Stmt::IfElse(
+                Ok(Stmt::IfElse(
                     Box::new(condition.clone()),
                     then_stmts,
                     else_stmts,
-                ));
-            }
+                ))
+            };
         }
-
-        Ok(())
+        unreachable!()
     }
 
     pub fn enter_else(&mut self) {
@@ -346,7 +324,11 @@ impl<'a> CodeBlock<'a> {
         let name = name.into();
         let type_ = self.fields.back().unwrap().get(&name);
         match type_ {
-            Some(type_) => err!("Variable {} of {} already exists in the current scope", name, type_),
+            Some(type_) => err!(
+                "Variable {} of {} already exists in the current scope",
+                name,
+                type_
+            ),
             None => {
                 self.fields.back_mut().unwrap().insert(name.clone(), ty);
                 self.stmts.push(Stmt::Declare(name, ty));
@@ -393,7 +375,11 @@ impl<'a> CodeBlock<'a> {
         let type_ = self.fields.back().unwrap().get(&name);
         match type_ {
             Some(type_) => {
-                err!("Variable {} of {} already exists in the current scope", name, type_)
+                err!(
+                    "Variable {} of {} already exists in the current scope",
+                    name,
+                    type_
+                )
             }
             None => {
                 self.fields
@@ -456,7 +442,7 @@ impl<'a> CodeBlock<'a> {
         let name = name.into();
         match self.find_type(&name) {
             None => err!("unknown identifier: {}", name),
-            Some(type_) => return Ok(Expr::new(ExprCode::Identifier(name), type_))
+            Some(type_) => return Ok(Expr::new(ExprCode::Identifier(name), type_)),
         }
     }
 
