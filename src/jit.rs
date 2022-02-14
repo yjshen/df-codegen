@@ -55,7 +55,7 @@ impl JIT {
         }
     }
 
-    /// Compile a string in the toy language into machine code.
+    /// Compile the generated function into machine code.
     pub fn compile(&mut self, func: GeneratedFunction) -> Result<*const u8> {
         let GeneratedFunction {
             name,
@@ -76,8 +76,7 @@ impl JIT {
         // Define the function to jit. This finishes compilation, although
         // there may be outstanding relocations to perform. Currently, jit
         // cannot finish relocations until all functions to be called are
-        // defined. For this toy demo for now, we'll just finalize the
-        // function below.
+        // defined. For now, we'll just finalize the function below.
         self.module
             .define_function(id, &mut self.ctx)
             .map_err(DataFusionError::JITError)?;
@@ -115,24 +114,20 @@ impl JIT {
         Ok(unsafe { slice::from_raw_parts(buffer.0, buffer.1) })
     }
 
-    // Translate from toy-language AST nodes into Cranelift IR.
+    // Translate into Cranelift IR.
     fn translate(
         &mut self,
         params: Vec<(String, crate::api::Type)>,
         the_return: Option<(String, crate::api::Type)>,
         stmts: Vec<Stmt>,
     ) -> Result<()> {
-        // Our toy language currently only supports I64 values, though Cranelift
-        // supports other types.
-        let int = self.module.target_config().pointer_type();
-
         for nt in &params {
             self.ctx.func.signature.params.push(AbiParam::new(nt.1 .0));
         }
 
         let mut void_return: bool = false;
 
-        // Our toy language currently only supports one return value, though
+        // We currently only supports one return value, though
         // Cranelift is designed to support more.
         match the_return {
             None => void_return = true,
@@ -168,7 +163,6 @@ impl JIT {
 
         // Now translate the statements of the function body.
         let mut trans = FunctionTranslator {
-            int,
             builder,
             variables,
             module: &mut self.module,
@@ -199,10 +193,9 @@ impl JIT {
     }
 }
 
-/// A collection of state used for translating from toy-language AST nodes
+/// A collection of state used for translating from AST nodes
 /// into Cranelift IR.
 struct FunctionTranslator<'a> {
-    int: types::Type,
     builder: FunctionBuilder<'a>,
     variables: HashMap<String, Variable>,
     module: &'a mut JITModule,
@@ -230,8 +223,9 @@ impl<'a> FunctionTranslator<'a> {
     fn translate_expr(&mut self, expr: Expr) -> Value {
         match expr.code {
             ExprCode::Literal(literal) => {
-                let imm: i32 = literal.parse().unwrap();
-                self.builder.ins().iconst(self.int, i64::from(imm))
+                // TODO: this should be a type matching cast
+                let i = literal.parse::<i64>().unwrap();
+                self.builder.ins().iconst(expr.type_.0, i)
             }
 
             ExprCode::Identifier(name) => {
@@ -290,7 +284,7 @@ impl<'a> FunctionTranslator<'a> {
         let lhs = self.translate_expr(lhs);
         let rhs = self.translate_expr(rhs);
         let c = self.builder.ins().icmp(cmp, lhs, rhs);
-        self.builder.ins().bint(self.int, c)
+        self.builder.ins().bint(crate::api::I64.0, c)
     }
 
     fn translate_if_else(&mut self, condition: Expr, then_body: Vec<Stmt>, else_body: Vec<Stmt>) {
@@ -299,13 +293,6 @@ impl<'a> FunctionTranslator<'a> {
         let then_block = self.builder.create_block();
         let else_block = self.builder.create_block();
         let merge_block = self.builder.create_block();
-
-        // If-else constructs in the toy language have a return value.
-        // In traditional SSA form, this would produce a PHI between
-        // the then and else bodies. Cranelift uses block parameters,
-        // so set up a parameter in the merge block, and we'll pass
-        // the return values to it from the branches.
-        // self.builder.append_block_param(merge_block, self.int);
 
         // Test the if condition and conditionally branch.
         self.builder.ins().brz(condition_value, else_block, &[]);
@@ -373,12 +360,12 @@ impl<'a> FunctionTranslator<'a> {
         let mut sig = self.module.make_signature();
 
         // Add a parameter for each argument.
-        for _arg in &args {
-            sig.params.push(AbiParam::new(self.int));
+        for arg in &args {
+            sig.params.push(AbiParam::new(arg.type_.0));
         }
 
         // For simplicity for now, just make all calls return a single I64.
-        sig.returns.push(AbiParam::new(self.int));
+        sig.returns.push(AbiParam::new(crate::api::I64.0));
 
         let callee = self
             .module

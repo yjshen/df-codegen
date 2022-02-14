@@ -34,7 +34,7 @@ pub enum Stmt {
 #[derive(Clone, Debug)]
 pub struct Expr {
     pub(crate) code: ExprCode,
-    type_: Type,
+    pub(crate) type_: Type,
 }
 
 impl Expr {
