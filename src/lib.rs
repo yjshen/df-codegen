@@ -34,22 +34,22 @@ mod tests {
         let mut fn_body = builder.enter_block();
 
         fn_body.if_block(
-            |cond| cond.eq(cond.id("n")?, cond.lit("0", I64)),
+            |cond| cond.eq(cond.id("n")?, cond.lit_i(0)),
             |t| {
-                t.assign("r", t.lit("0", I64))?;
+                t.assign("r", t.lit_i(0))?;
                 Ok(())
             },
             |e| {
-                e.assign("n", e.sub(e.id("n")?, e.lit("1", I64))?)?;
-                e.declare_as("a", e.lit("0", I64))?;
-                e.assign("r", e.lit("1", I64))?;
+                e.assign("n", e.sub(e.id("n")?, e.lit_i(1))?)?;
+                e.declare_as("a", e.lit_i(0))?;
+                e.assign("r", e.lit_i(1))?;
                 e.while_block(
-                    |cond| cond.ne(cond.id("n")?, cond.lit("0", I64)),
+                    |cond| cond.ne(cond.id("n")?, cond.lit_i(0)),
                     |w| {
                         w.declare_as("t", w.id("r")?)?;
                         w.assign("r", w.add(w.id("r")?, w.id("a")?)?)?;
                         w.assign("a", w.id("t")?)?;
-                        w.assign("n", w.sub(w.id("n")?, w.lit("1", I64))?)?;
+                        w.assign("n", w.sub(w.id("n")?, w.lit_i(1))?)?;
                         Ok(())
                     },
                 )?;

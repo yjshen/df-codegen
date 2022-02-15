@@ -1,4 +1,4 @@
-use crate::api::{Expr, ExprCode, GeneratedFunction, JITType, Stmt, I64};
+use crate::api::{Expr, ExprCode, GeneratedFunction, JITType, Stmt, TypedLit, BOOL, I64};
 use crate::error::{DataFusionError, Result};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -40,6 +40,7 @@ impl Default for JIT {
 }
 
 impl JIT {
+    /// New while registering external functions
     pub fn new<It, K>(symbols: It) -> Self
     where
         It: IntoIterator<Item = (K, *const u8)>,
@@ -123,12 +124,12 @@ impl JIT {
         the_return: Option<(String, JITType)>,
         stmts: Vec<Stmt>,
     ) -> Result<()> {
-        for nt in &params {
+        for param in &params {
             self.ctx
                 .func
                 .signature
                 .params
-                .push(AbiParam::new(nt.1.native));
+                .push(AbiParam::new(param.1.native));
         }
 
         let mut void_return: bool = false;
@@ -164,7 +165,7 @@ impl JIT {
         // predecessors.
         builder.seal_block(entry_block);
 
-        // Walk the AST and declare all implicitly-declared variables.
+        // Walk the AST and declare all variables.
         let variables = declare_variables(&mut builder, &params, &the_return, &stmts, entry_block);
 
         // Now translate the statements of the function body.
@@ -224,6 +225,15 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
+    fn translate_typed_lit(&mut self, tl: TypedLit) -> Value {
+        match tl {
+            TypedLit::Bool(b) => self.builder.ins().bconst(BOOL.native, b),
+            TypedLit::Int(i) => self.builder.ins().iconst(I64.native, i),
+            TypedLit::Float(f) => self.builder.ins().f32const(f),
+            TypedLit::Double(d) => self.builder.ins().f64const(d),
+        }
+    }
+
     /// When you write out instructions in Cranelift, you get back `Value`s. You
     /// can then use these references in other instructions.
     fn translate_expr(&mut self, expr: Expr) -> Value {
@@ -233,7 +243,7 @@ impl<'a> FunctionTranslator<'a> {
                 let i = literal.parse::<i64>().unwrap();
                 self.builder.ins().iconst(expr.typ.native, i)
             }
-
+            ExprCode::TypedLiteral(tl) => self.translate_typed_lit(tl),
             ExprCode::Identifier(name) => {
                 // `use_var` is used to read the value of a variable.
                 let variable = self.variables.get(&name).expect("variable not defined");
@@ -399,6 +409,21 @@ impl<'a> FunctionTranslator<'a> {
     }
 }
 
+fn typed_zero(typ: JITType, builder: &mut FunctionBuilder) -> Value {
+    match typ.code {
+        0x70 => builder.ins().bconst(typ.native, false),
+        0x76 => builder.ins().iconst(typ.native, 0),
+        0x77 => builder.ins().iconst(typ.native, 0),
+        0x78 => builder.ins().iconst(typ.native, 0),
+        0x79 => builder.ins().iconst(typ.native, 0),
+        0x7b => builder.ins().f32const(0.0),
+        0x7c => builder.ins().f64const(0.0),
+        0x7e => builder.ins().null(typ.native),
+        0x7f => builder.ins().null(typ.native),
+        _ => panic!("unsupported type"),
+    }
+}
+
 fn declare_variables(
     builder: &mut FunctionBuilder,
     params: &[(String, JITType)],
@@ -415,14 +440,10 @@ fn declare_variables(
         builder.def_var(var, val);
     }
 
-    match the_return {
-        None => {}
-        Some(ret) => {
-            let zero = builder.ins().iconst(ret.1.native, 0);
-            let return_variable =
-                declare_variable(builder, &mut variables, &mut index, &ret.0, ret.1);
-            builder.def_var(return_variable, zero);
-        }
+    if let Some(ret) = the_return {
+        let zero = typed_zero(ret.1, builder);
+        let return_variable = declare_variable(builder, &mut variables, &mut index, &ret.0, ret.1);
+        builder.def_var(return_variable, zero);
     }
 
     for stmt in stmts {
@@ -432,8 +453,7 @@ fn declare_variables(
     variables
 }
 
-/// Recursively descend through the AST, translating all implicit
-/// variable declarations.
+/// Recursively descend through the AST, translating all declarations.
 fn declare_variables_in_stmt(
     builder: &mut FunctionBuilder,
     variables: &mut HashMap<String, Variable>,

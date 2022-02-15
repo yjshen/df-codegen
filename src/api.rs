@@ -43,9 +43,18 @@ impl Expr {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum TypedLit {
+    Bool(bool),
+    Int(i64),
+    Float(f32),
+    Double(f64),
+}
+
 #[derive(Clone, Debug)]
 pub enum ExprCode {
     Literal(String),
+    TypedLiteral(TypedLit),
     Identifier(String),
     Eq(Box<Expr>, Box<Expr>),
     Ne(Box<Expr>, Box<Expr>),
@@ -60,9 +69,38 @@ pub enum ExprCode {
     Call(String, Vec<Expr>),
 }
 
+#[derive(Clone, Debug)]
+pub enum NewExpr {
+    Literal(NewLiteral),
+    Identifier(String, JITType),
+    Binary(BinaryExpr),
+    Call(String, Vec<NewExpr>, JITType),
+}
+
+#[derive(Clone, Debug)]
+pub enum BinaryExpr {
+    Eq(Box<NewExpr>, Box<NewExpr>, JITType),
+    Ne(Box<NewExpr>, Box<NewExpr>, JITType),
+    Lt(Box<NewExpr>, Box<NewExpr>, JITType),
+    Le(Box<NewExpr>, Box<NewExpr>, JITType),
+    Gt(Box<NewExpr>, Box<NewExpr>, JITType),
+    Ge(Box<NewExpr>, Box<NewExpr>, JITType),
+    Add(Box<NewExpr>, Box<NewExpr>),
+    Sub(Box<NewExpr>, Box<NewExpr>),
+    Mul(Box<NewExpr>, Box<NewExpr>),
+    Div(Box<NewExpr>, Box<NewExpr>),
+}
+
+#[derive(Clone, Debug)]
+pub enum NewLiteral {
+    Parsing(String, JITType),
+    Typed(TypedLit, JITType),
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct JITType {
     pub(crate) native: ir::Type,
+    /// re-expose inner field of `ir::Type` out for easier pattern matching
     pub(crate) code: u8,
 }
 
@@ -72,39 +110,39 @@ pub const NIL: JITType = JITType {
 };
 pub const BOOL: JITType = JITType {
     native: ir::types::B1,
-    code: 1,
+    code: 0x70,
 };
 pub const I8: JITType = JITType {
     native: ir::types::I8,
-    code: 2,
+    code: 0x76,
 };
 pub const I16: JITType = JITType {
     native: ir::types::I16,
-    code: 3,
+    code: 0x77,
 };
 pub const I32: JITType = JITType {
     native: ir::types::I32,
-    code: 4,
+    code: 0x78,
 };
 pub const I64: JITType = JITType {
     native: ir::types::I64,
-    code: 5,
+    code: 0x79,
 };
 pub const F32: JITType = JITType {
     native: ir::types::F32,
-    code: 6,
+    code: 0x7b,
 };
 pub const F64: JITType = JITType {
     native: ir::types::F64,
-    code: 7,
+    code: 0x7c,
 };
 pub const R32: JITType = JITType {
     native: ir::types::R32,
-    code: 8,
+    code: 0x7e,
 };
 pub const R64: JITType = JITType {
     native: ir::types::R64,
-    code: 9,
+    code: 0x7f,
 };
 
 #[derive(Default)]
@@ -474,6 +512,22 @@ impl<'a> CodeBlock<'a> {
         Expr::new(ExprCode::Literal(val.into()), ty)
     }
 
+    pub fn lit_i(&self, val: impl Into<i64>) -> Expr {
+        Expr::new(ExprCode::TypedLiteral(TypedLit::Int(val.into())), I64)
+    }
+
+    pub fn lit_f(&self, val: f32) -> Expr {
+        Expr::new(ExprCode::TypedLiteral(TypedLit::Float(val)), F32)
+    }
+
+    pub fn lit_d(&self, val: f64) -> Expr {
+        Expr::new(ExprCode::TypedLiteral(TypedLit::Double(val)), F64)
+    }
+
+    pub fn lit_b(&self, val: bool) -> Expr {
+        Expr::new(ExprCode::TypedLiteral(TypedLit::Bool(val)), BOOL)
+    }
+
     pub fn id(&self, name: impl Into<String>) -> Result<Expr> {
         let name = name.into();
         match self.find_type(&name) {
@@ -657,6 +711,7 @@ impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.code {
             ExprCode::Literal(lit) => write!(f, "{}", lit),
+            ExprCode::TypedLiteral(tl) => write!(f, "{}", tl),
             ExprCode::Identifier(name) => write!(f, "{}", name),
             ExprCode::Eq(lhs, rhs) => write!(f, "{} == {}", lhs, rhs),
             ExprCode::Ne(lhs, rhs) => write!(f, "{} != {}", lhs, rhs),
@@ -684,6 +739,65 @@ impl Display for Expr {
     }
 }
 
+impl Display for NewExpr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NewExpr::Literal(l) => write!(f, "{}", l),
+            NewExpr::Identifier(name, _) => write!(f, "{}", name),
+            NewExpr::Binary(be) => write!(f, "{}", be),
+            NewExpr::Call(name, exprs, _) => {
+                write!(
+                    f,
+                    "{}({})",
+                    name,
+                    exprs
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+    }
+}
+
+impl Display for NewLiteral {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NewLiteral::Parsing(str, _) => write!(f, "{}", str),
+            NewLiteral::Typed(tl, _) => write!(f, "{}", tl),
+        }
+    }
+}
+
+impl Display for TypedLit {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypedLit::Bool(b) => write!(f, "{}", b),
+            TypedLit::Int(i) => write!(f, "{}", i),
+            TypedLit::Float(fl) => write!(f, "{}", fl),
+            TypedLit::Double(d) => write!(f, "{}", d),
+        }
+    }
+}
+
+impl Display for BinaryExpr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinaryExpr::Eq(lhs, rhs, _) => write!(f, "{} == {}", lhs, rhs),
+            BinaryExpr::Ne(lhs, rhs, _) => write!(f, "{} != {}", lhs, rhs),
+            BinaryExpr::Lt(lhs, rhs, _) => write!(f, "{} < {}", lhs, rhs),
+            BinaryExpr::Le(lhs, rhs, _) => write!(f, "{} <= {}", lhs, rhs),
+            BinaryExpr::Gt(lhs, rhs, _) => write!(f, "{} > {}", lhs, rhs),
+            BinaryExpr::Ge(lhs, rhs, _) => write!(f, "{} >= {}", lhs, rhs),
+            BinaryExpr::Add(lhs, rhs) => write!(f, "{} + {}", lhs, rhs),
+            BinaryExpr::Sub(lhs, rhs) => write!(f, "{} - {}", lhs, rhs),
+            BinaryExpr::Mul(lhs, rhs) => write!(f, "{} * {}", lhs, rhs),
+            BinaryExpr::Div(lhs, rhs) => write!(f, "{} / {}", lhs, rhs),
+        }
+    }
+}
+
 impl std::fmt::Display for JITType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
@@ -694,15 +808,15 @@ impl std::fmt::Debug for JITType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.code {
             0 => write!(f, "nil"),
-            1 => write!(f, "bool"),
-            2 => write!(f, "i8"),
-            3 => write!(f, "i16"),
-            4 => write!(f, "i32"),
-            5 => write!(f, "i64"),
-            6 => write!(f, "f32"),
-            7 => write!(f, "f64"),
-            8 => write!(f, "small_ptr"),
-            9 => write!(f, "ptr"),
+            0x70 => write!(f, "bool"),
+            0x76 => write!(f, "i8"),
+            0x77 => write!(f, "i16"),
+            0x78 => write!(f, "i32"),
+            0x79 => write!(f, "i64"),
+            0x7b => write!(f, "f32"),
+            0x7c => write!(f, "f64"),
+            0x7e => write!(f, "small_ptr"),
+            0x7f => write!(f, "ptr"),
             _ => write!(f, "unknown"),
         }
     }
