@@ -1,11 +1,13 @@
 #![allow(dead_code)]
 mod api;
+mod ast;
 mod error;
 mod jit;
 
 #[cfg(test)]
 mod tests {
-    use crate::api::{Assembler, GeneratedFunction, I64};
+    use crate::api::{Assembler, GeneratedFunction};
+    use crate::ast::I64;
     use crate::error::Result;
     use crate::jit::JIT;
 

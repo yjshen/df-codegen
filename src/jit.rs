@@ -1,4 +1,5 @@
-use crate::api::{Expr, ExprCode, GeneratedFunction, JITType, Stmt, TypedLit, BOOL, I64};
+use crate::api::GeneratedFunction;
+use crate::ast::{JITType, NewExpr, Stmt, TypedLit, BOOL, I64};
 use crate::error::{DataFusionError, Result};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -236,12 +237,12 @@ impl<'a> FunctionTranslator<'a> {
 
     /// When you write out instructions in Cranelift, you get back `Value`s. You
     /// can then use these references in other instructions.
-    fn translate_expr(&mut self, expr: Expr) -> Value {
+    fn translate_expr(&mut self, expr: NewExpr) -> Value {
         match expr.code {
             ExprCode::Literal(literal) => {
                 // TODO: this should be a type matching cast
                 let i = literal.parse::<i64>().unwrap();
-                self.builder.ins().iconst(expr.typ.native, i)
+                self.builder.ins().iconst(expr.get_type().native, i)
             }
             ExprCode::TypedLiteral(tl) => self.translate_typed_lit(tl),
             ExprCode::Identifier(name) => {
@@ -287,7 +288,7 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_assign(&mut self, name: String, expr: Expr) {
+    fn translate_assign(&mut self, name: String, expr: NewExpr) {
         // `def_var` is used to write the value of a variable. Note that
         // variables can have multiple definitions. Cranelift will
         // convert them into SSA form for itself automatically.
@@ -296,14 +297,19 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.def_var(*variable, new_value);
     }
 
-    fn translate_icmp(&mut self, cmp: IntCC, lhs: Expr, rhs: Expr) -> Value {
+    fn translate_icmp(&mut self, cmp: IntCC, lhs: NewExpr, rhs: NewExpr) -> Value {
         let lhs = self.translate_expr(lhs);
         let rhs = self.translate_expr(rhs);
         let c = self.builder.ins().icmp(cmp, lhs, rhs);
         self.builder.ins().bint(I64.native, c)
     }
 
-    fn translate_if_else(&mut self, condition: Expr, then_body: Vec<Stmt>, else_body: Vec<Stmt>) {
+    fn translate_if_else(
+        &mut self,
+        condition: NewExpr,
+        then_body: Vec<Stmt>,
+        else_body: Vec<Stmt>,
+    ) {
         let condition_value = self.translate_expr(condition);
 
         let then_block = self.builder.create_block();
@@ -344,7 +350,7 @@ impl<'a> FunctionTranslator<'a> {
         // self.builder.block_params(merge_block)[0];
     }
 
-    fn translate_while_loop(&mut self, condition: Expr, loop_body: Vec<Stmt>) {
+    fn translate_while_loop(&mut self, condition: NewExpr, loop_body: Vec<Stmt>) {
         let header_block = self.builder.create_block();
         let body_block = self.builder.create_block();
         let exit_block = self.builder.create_block();
@@ -372,12 +378,12 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(exit_block);
     }
 
-    fn translate_call(&mut self, name: String, args: Vec<Expr>) -> Value {
+    fn translate_call(&mut self, name: String, args: Vec<NewExpr>) -> Value {
         let mut sig = self.module.make_signature();
 
         // Add a parameter for each argument.
         for arg in &args {
-            sig.params.push(AbiParam::new(arg.typ.native));
+            sig.params.push(AbiParam::new(arg.get_type().native));
         }
 
         // For simplicity for now, just make all calls return a single I64.
