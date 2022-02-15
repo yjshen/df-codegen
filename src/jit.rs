@@ -1,4 +1,4 @@
-use crate::api::{Expr, ExprCode, GeneratedFunction, JitType, Stmt, I64};
+use crate::api::{Expr, ExprCode, GeneratedFunction, JITType, Stmt, I64};
 use crate::error::{DataFusionError, Result};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use std::slice;
 
 /// The basic JIT class.
-pub struct Jit {
+#[allow(clippy::upper_case_acronyms)]
+pub struct JIT {
     /// The function builder context, which is reused across multiple
     /// FunctionBuilder instances.
     builder_context: FunctionBuilderContext,
@@ -25,7 +26,7 @@ pub struct Jit {
     module: JITModule,
 }
 
-impl Default for Jit {
+impl Default for JIT {
     fn default() -> Self {
         let builder = JITBuilder::new(cranelift_module::default_libcall_names());
         let module = JITModule::new(builder);
@@ -38,7 +39,7 @@ impl Default for Jit {
     }
 }
 
-impl Jit {
+impl JIT {
     pub fn new<It, K>(symbols: It) -> Self
     where
         It: IntoIterator<Item = (K, *const u8)>,
@@ -118,8 +119,8 @@ impl Jit {
     // Translate into Cranelift IR.
     fn translate(
         &mut self,
-        params: Vec<(String, JitType)>,
-        the_return: Option<(String, JitType)>,
+        params: Vec<(String, JITType)>,
+        the_return: Option<(String, JITType)>,
         stmts: Vec<Stmt>,
     ) -> Result<()> {
         for nt in &params {
@@ -400,8 +401,8 @@ impl<'a> FunctionTranslator<'a> {
 
 fn declare_variables(
     builder: &mut FunctionBuilder,
-    params: &[(String, JitType)],
-    the_return: &Option<(String, JitType)>,
+    params: &[(String, JITType)],
+    the_return: &Option<(String, JITType)>,
     stmts: &[Stmt],
     entry_block: Block,
 ) -> HashMap<String, Variable> {
@@ -466,7 +467,7 @@ fn declare_variable(
     variables: &mut HashMap<String, Variable>,
     index: &mut usize,
     name: &str,
-    typ: JitType,
+    typ: JITType,
 ) -> Variable {
     let var = Variable::new(*index);
     if !variables.contains_key(name) {

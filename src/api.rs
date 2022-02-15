@@ -1,5 +1,5 @@
 use crate::error::{DataFusionError, Result};
-use crate::jit::Jit;
+use crate::jit::JIT;
 use cranelift::codegen::ir;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -10,16 +10,16 @@ use std::sync::Arc;
 struct ExternFuncSignature {
     name: String,
     code: *const u8,
-    params: Vec<JitType>,
-    returns: Option<JitType>,
+    params: Vec<JITType>,
+    returns: Option<JITType>,
 }
 
 #[derive(Clone, Debug)]
 pub struct GeneratedFunction {
     pub name: String,
-    pub params: Vec<(String, JitType)>,
+    pub params: Vec<(String, JITType)>,
     pub body: Vec<Stmt>,
-    pub ret: Option<(String, JitType)>,
+    pub ret: Option<(String, JITType)>,
 }
 
 #[derive(Clone, Debug)]
@@ -28,17 +28,17 @@ pub enum Stmt {
     WhileLoop(Box<Expr>, Vec<Stmt>),
     Assign(String, Box<Expr>),
     SideEffect(Box<Expr>),
-    Declare(String, JitType),
+    Declare(String, JITType),
 }
 
 #[derive(Clone, Debug)]
 pub struct Expr {
     pub(crate) code: ExprCode,
-    pub(crate) typ: JitType,
+    pub(crate) typ: JITType,
 }
 
 impl Expr {
-    pub fn new(code: ExprCode, typ: JitType) -> Self {
+    pub fn new(code: ExprCode, typ: JITType) -> Self {
         Self { code, typ }
     }
 }
@@ -61,48 +61,48 @@ pub enum ExprCode {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct JitType {
+pub struct JITType {
     pub(crate) native: ir::Type,
     pub(crate) code: u8,
 }
 
-pub const NIL: JitType = JitType {
+pub const NIL: JITType = JITType {
     native: ir::types::INVALID,
     code: 0,
 };
-pub const BOOL: JitType = JitType {
+pub const BOOL: JITType = JITType {
     native: ir::types::B1,
     code: 1,
 };
-pub const I8: JitType = JitType {
+pub const I8: JITType = JITType {
     native: ir::types::I8,
     code: 2,
 };
-pub const I16: JitType = JitType {
+pub const I16: JITType = JITType {
     native: ir::types::I16,
     code: 3,
 };
-pub const I32: JitType = JitType {
+pub const I32: JITType = JITType {
     native: ir::types::I32,
     code: 4,
 };
-pub const I64: JitType = JitType {
+pub const I64: JITType = JITType {
     native: ir::types::I64,
     code: 5,
 };
-pub const F32: JitType = JitType {
+pub const F32: JITType = JITType {
     native: ir::types::F32,
     code: 6,
 };
-pub const F64: JitType = JitType {
+pub const F64: JITType = JITType {
     native: ir::types::F64,
     code: 7,
 };
-pub const R32: JitType = JitType {
+pub const R32: JITType = JITType {
     native: ir::types::R32,
     code: 8,
 };
-pub const R64: JitType = JitType {
+pub const R64: JITType = JITType {
     native: ir::types::R64,
     code: 9,
 };
@@ -150,8 +150,8 @@ impl Assembler {
         &self,
         name: impl Into<String>,
         ptr: *const u8,
-        params: Vec<JitType>,
-        returns: Option<JitType>,
+        params: Vec<JITType>,
+        returns: Option<JITType>,
     ) -> Result<()> {
         let extern_funcs = &mut self.state.lock().extern_funcs;
         let fn_name = name.into();
@@ -176,7 +176,7 @@ impl Assembler {
         FunctionBuilder::new(name, self.state.clone())
     }
 
-    pub fn create_jit(&self) -> Jit {
+    pub fn create_jit(&self) -> JIT {
         let symbols = self
             .state
             .lock()
@@ -184,16 +184,16 @@ impl Assembler {
             .values()
             .map(|s| (s.name.clone(), s.code))
             .collect::<Vec<_>>();
-        Jit::new(symbols)
+        JIT::new(symbols)
     }
 }
 
 pub struct FunctionBuilder {
     pub name: String,
-    pub params: Vec<(String, JitType)>,
+    pub params: Vec<(String, JITType)>,
     pub body: Vec<Stmt>,
-    pub ret: Option<(String, JitType)>,
-    fields: VecDeque<HashMap<String, JitType>>,
+    pub ret: Option<(String, JITType)>,
+    fields: VecDeque<HashMap<String, JITType>>,
     assembler_state: Arc<Mutex<AssemblerState>>,
 }
 
@@ -211,7 +211,7 @@ impl FunctionBuilder {
         }
     }
 
-    pub fn param(mut self, name: impl Into<String>, ty: JitType) -> Self {
+    pub fn param(mut self, name: impl Into<String>, ty: JITType) -> Self {
         let name = name.into();
         assert!(!self.fields.back().unwrap().contains_key(&name));
         self.params.push((name.clone(), ty));
@@ -219,7 +219,7 @@ impl FunctionBuilder {
         self
     }
 
-    pub fn ret(mut self, name: impl Into<String>, ty: JitType) -> Self {
+    pub fn ret(mut self, name: impl Into<String>, ty: JITType) -> Self {
         let name = name.into();
         assert!(!self.fields.back().unwrap().contains_key(&name));
         self.ret = Some((name.clone(), ty));
@@ -263,7 +263,7 @@ impl IfElseState {
 }
 
 pub struct CodeBlock<'a> {
-    fields: &'a mut VecDeque<HashMap<String, JitType>>,
+    fields: &'a mut VecDeque<HashMap<String, JITType>>,
     state: &'a Arc<Mutex<AssemblerState>>,
     stmts: Vec<Stmt>,
     while_state: Option<WhileState>,
@@ -328,7 +328,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn declare(&mut self, name: impl Into<String>, ty: JitType) -> Result<()> {
+    pub fn declare(&mut self, name: impl Into<String>, ty: JITType) -> Result<()> {
         let name = name.into();
         let typ = self.fields.back().unwrap().get(&name);
         match typ {
@@ -345,7 +345,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    fn find_type(&self, name: impl Into<String>) -> Option<JitType> {
+    fn find_type(&self, name: impl Into<String>) -> Option<JITType> {
         let name = name.into();
         for scope in self.fields.iter().rev() {
             let typ = scope.get(&name);
@@ -470,7 +470,7 @@ impl<'a> CodeBlock<'a> {
         Ok(())
     }
 
-    pub fn lit(&self, val: impl Into<String>, ty: JitType) -> Expr {
+    pub fn lit(&self, val: impl Into<String>, ty: JITType) -> Expr {
         Expr::new(ExprCode::Literal(val.into()), ty)
     }
 
@@ -684,13 +684,13 @@ impl Display for Expr {
     }
 }
 
-impl std::fmt::Display for JitType {
+impl std::fmt::Display for JITType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
-impl std::fmt::Debug for JitType {
+impl std::fmt::Debug for JITType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.code {
             0 => write!(f, "nil"),
@@ -708,7 +708,7 @@ impl std::fmt::Debug for JitType {
     }
 }
 
-impl From<&str> for JitType {
+impl From<&str> for JITType {
     fn from(x: &str) -> Self {
         match x {
             "bool" => BOOL,
