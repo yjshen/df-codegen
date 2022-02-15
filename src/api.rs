@@ -1,5 +1,5 @@
 use crate::error::{DataFusionError, Result};
-use crate::jit::JIT;
+use crate::jit::Jit;
 use cranelift::codegen::ir;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -10,16 +10,16 @@ use std::sync::Arc;
 struct ExternFuncSignature {
     name: String,
     code: *const u8,
-    params: Vec<Type>,
-    returns: Option<Type>,
+    params: Vec<JitType>,
+    returns: Option<JitType>,
 }
 
 #[derive(Clone, Debug)]
 pub struct GeneratedFunction {
     pub name: String,
-    pub params: Vec<(String, Type)>,
+    pub params: Vec<(String, JitType)>,
     pub body: Vec<Stmt>,
-    pub ret: Option<(String, Type)>,
+    pub ret: Option<(String, JitType)>,
 }
 
 #[derive(Clone, Debug)]
@@ -28,18 +28,18 @@ pub enum Stmt {
     WhileLoop(Box<Expr>, Vec<Stmt>),
     Assign(String, Box<Expr>),
     SideEffect(Box<Expr>),
-    Declare(String, Type),
+    Declare(String, JitType),
 }
 
 #[derive(Clone, Debug)]
 pub struct Expr {
     pub(crate) code: ExprCode,
-    pub(crate) type_: Type,
+    pub(crate) typ: JitType,
 }
 
 impl Expr {
-    pub fn new(code: ExprCode, type_: Type) -> Self {
-        Self { code, type_ }
+    pub fn new(code: ExprCode, typ: JitType) -> Self {
+        Self { code, typ }
     }
 }
 
@@ -61,30 +61,56 @@ pub enum ExprCode {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Type(pub(crate) ir::Type, pub(crate) u8);
-pub const NIL: Type = Type(ir::types::INVALID, 0);
-pub const BOOL: Type = Type(ir::types::B1, 1);
-pub const I8: Type = Type(ir::types::I8, 2);
-pub const I16: Type = Type(ir::types::I16, 3);
-pub const I32: Type = Type(ir::types::I32, 4);
-pub const I64: Type = Type(ir::types::I64, 5);
-pub const F32: Type = Type(ir::types::F32, 6);
-pub const F64: Type = Type(ir::types::F64, 7);
-pub const R32: Type = Type(ir::types::R32, 8);
-pub const R64: Type = Type(ir::types::R64, 9);
+pub struct JitType {
+    pub(crate) native: ir::Type,
+    pub(crate) code: u8,
+}
 
+pub const NIL: JitType = JitType {
+    native: ir::types::INVALID,
+    code: 0,
+};
+pub const BOOL: JitType = JitType {
+    native: ir::types::B1,
+    code: 1,
+};
+pub const I8: JitType = JitType {
+    native: ir::types::I8,
+    code: 2,
+};
+pub const I16: JitType = JitType {
+    native: ir::types::I16,
+    code: 3,
+};
+pub const I32: JitType = JitType {
+    native: ir::types::I32,
+    code: 4,
+};
+pub const I64: JitType = JitType {
+    native: ir::types::I64,
+    code: 5,
+};
+pub const F32: JitType = JitType {
+    native: ir::types::F32,
+    code: 6,
+};
+pub const F64: JitType = JitType {
+    native: ir::types::F64,
+    code: 7,
+};
+pub const R32: JitType = JitType {
+    native: ir::types::R32,
+    code: 8,
+};
+pub const R64: JitType = JitType {
+    native: ir::types::R64,
+    code: 9,
+};
+
+#[derive(Default)]
 pub struct AssemblerState {
     name_next_id: HashMap<String, u8>,
     extern_funcs: HashMap<String, ExternFuncSignature>,
-}
-
-impl Default for AssemblerState {
-    fn default() -> Self {
-        Self {
-            name_next_id: Default::default(),
-            extern_funcs: Default::default(),
-        }
-    }
 }
 
 impl AssemblerState {
@@ -124,8 +150,8 @@ impl Assembler {
         &self,
         name: impl Into<String>,
         ptr: *const u8,
-        params: Vec<Type>,
-        returns: Option<Type>,
+        params: Vec<JitType>,
+        returns: Option<JitType>,
     ) -> Result<()> {
         let extern_funcs = &mut self.state.lock().extern_funcs;
         let fn_name = name.into();
@@ -150,7 +176,7 @@ impl Assembler {
         FunctionBuilder::new(name, self.state.clone())
     }
 
-    pub fn create_jit(&self) -> JIT {
+    pub fn create_jit(&self) -> Jit {
         let symbols = self
             .state
             .lock()
@@ -158,16 +184,16 @@ impl Assembler {
             .values()
             .map(|s| (s.name.clone(), s.code))
             .collect::<Vec<_>>();
-        JIT::new(symbols)
+        Jit::new(symbols)
     }
 }
 
 pub struct FunctionBuilder {
     pub name: String,
-    pub params: Vec<(String, Type)>,
+    pub params: Vec<(String, JitType)>,
     pub body: Vec<Stmt>,
-    pub ret: Option<(String, Type)>,
-    fields: VecDeque<HashMap<String, Type>>,
+    pub ret: Option<(String, JitType)>,
+    fields: VecDeque<HashMap<String, JitType>>,
     assembler_state: Arc<Mutex<AssemblerState>>,
 }
 
@@ -185,7 +211,7 @@ impl FunctionBuilder {
         }
     }
 
-    pub fn param(mut self, name: impl Into<String>, ty: Type) -> Self {
+    pub fn param(mut self, name: impl Into<String>, ty: JitType) -> Self {
         let name = name.into();
         assert!(!self.fields.back().unwrap().contains_key(&name));
         self.params.push((name.clone(), ty));
@@ -193,7 +219,7 @@ impl FunctionBuilder {
         self
     }
 
-    pub fn ret(mut self, name: impl Into<String>, ty: Type) -> Self {
+    pub fn ret(mut self, name: impl Into<String>, ty: JitType) -> Self {
         let name = name.into();
         assert!(!self.fields.back().unwrap().contains_key(&name));
         self.ret = Some((name.clone(), ty));
@@ -230,14 +256,14 @@ pub struct IfElseState {
 }
 
 impl IfElseState {
-    fn to_else(&mut self, then_stmts: Vec<Stmt>) {
+    fn enter_else(&mut self, then_stmts: Vec<Stmt>) {
         self.then_stmts = then_stmts;
         self.in_then = false;
     }
 }
 
 pub struct CodeBlock<'a> {
-    fields: &'a mut VecDeque<HashMap<String, Type>>,
+    fields: &'a mut VecDeque<HashMap<String, JitType>>,
     state: &'a Arc<Mutex<AssemblerState>>,
     stmts: Vec<Stmt>,
     while_state: Option<WhileState>,
@@ -297,20 +323,19 @@ impl<'a> CodeBlock<'a> {
         self.fields.push_back(HashMap::new());
         assert!(self.if_state.is_some() && self.if_state.as_ref().unwrap().in_then);
         let new_then = self.stmts.drain(..).collect::<Vec<_>>();
-        match self.if_state.iter_mut().next() {
-            Some(s) => s.to_else(new_then),
-            None => {}
+        if let Some(s) = self.if_state.iter_mut().next() {
+            s.enter_else(new_then)
         }
     }
 
-    pub fn declare(&mut self, name: impl Into<String>, ty: Type) -> Result<()> {
+    pub fn declare(&mut self, name: impl Into<String>, ty: JitType) -> Result<()> {
         let name = name.into();
-        let type_ = self.fields.back().unwrap().get(&name);
-        match type_ {
-            Some(type_) => err!(
+        let typ = self.fields.back().unwrap().get(&name);
+        match typ {
+            Some(typ) => err!(
                 "Variable {} of {} already exists in the current scope",
                 name,
-                type_
+                typ
             ),
             None => {
                 self.fields.back_mut().unwrap().insert(name.clone(), ty);
@@ -320,13 +345,12 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    fn find_type(&self, name: impl Into<String>) -> Option<Type> {
+    fn find_type(&self, name: impl Into<String>) -> Option<JitType> {
         let name = name.into();
         for scope in self.fields.iter().rev() {
-            let type_ = scope.get(&name);
-            match type_ {
-                Some(type_) => return Some(*type_),
-                None => {}
+            let typ = scope.get(&name);
+            if let Some(typ) = typ {
+                return Some(*typ);
             }
         }
         None
@@ -334,15 +358,15 @@ impl<'a> CodeBlock<'a> {
 
     pub fn assign(&mut self, name: impl Into<String>, expr: Expr) -> Result<()> {
         let name = name.into();
-        let type_ = self.find_type(&name);
-        match type_ {
-            Some(type_) => {
-                if type_ != expr.type_ {
+        let typ = self.find_type(&name);
+        match typ {
+            Some(typ) => {
+                if typ != expr.typ {
                     err!(
                         "Variable {} of {} cannot be assigned to {}",
                         name,
-                        type_,
-                        expr.type_
+                        typ,
+                        expr.typ
                     )
                 } else {
                     self.stmts.push(Stmt::Assign(name, Box::new(expr)));
@@ -355,21 +379,21 @@ impl<'a> CodeBlock<'a> {
 
     pub fn declare_as(&mut self, name: impl Into<String>, expr: Expr) -> Result<()> {
         let name = name.into();
-        let type_ = self.fields.back().unwrap().get(&name);
-        match type_ {
-            Some(type_) => {
+        let typ = self.fields.back().unwrap().get(&name);
+        match typ {
+            Some(typ) => {
                 err!(
                     "Variable {} of {} already exists in the current scope",
                     name,
-                    type_
+                    typ
                 )
             }
             None => {
                 self.fields
                     .back_mut()
                     .unwrap()
-                    .insert(name.clone(), expr.type_);
-                self.stmts.push(Stmt::Declare(name.clone(), expr.type_));
+                    .insert(name.clone(), expr.typ);
+                self.stmts.push(Stmt::Declare(name.clone(), expr.typ));
                 self.stmts.push(Stmt::Assign(name, Box::new(expr)));
                 Ok(())
             }
@@ -382,13 +406,13 @@ impl<'a> CodeBlock<'a> {
     }
 
     pub fn while_loop(&mut self, cond: Expr) -> Result<CodeBlock> {
-        if cond.type_ != BOOL {
+        if cond.typ != BOOL {
             err!("while condition must be bool")
         } else {
             self.fields.push_back(HashMap::new());
             Ok(CodeBlock {
-                fields: &mut self.fields,
-                state: &self.state,
+                fields: self.fields,
+                state: self.state,
                 stmts: vec![],
                 while_state: Some(WhileState { condition: cond }),
                 if_state: None,
@@ -398,13 +422,13 @@ impl<'a> CodeBlock<'a> {
     }
 
     pub fn if_else(&mut self, cond: Expr) -> Result<CodeBlock> {
-        if cond.type_ != BOOL {
+        if cond.typ != BOOL {
             err!("if condition must be bool")
         } else {
             self.fields.push_back(HashMap::new());
             Ok(CodeBlock {
-                fields: &mut self.fields,
-                state: &self.state,
+                fields: self.fields,
+                state: self.state,
                 stmts: vec![],
                 while_state: None,
                 if_state: Some(IfElseState {
@@ -446,7 +470,7 @@ impl<'a> CodeBlock<'a> {
         Ok(())
     }
 
-    pub fn lit(&self, val: impl Into<String>, ty: Type) -> Expr {
+    pub fn lit(&self, val: impl Into<String>, ty: JitType) -> Expr {
         Expr::new(ExprCode::Literal(val.into()), ty)
     }
 
@@ -454,103 +478,91 @@ impl<'a> CodeBlock<'a> {
         let name = name.into();
         match self.find_type(&name) {
             None => err!("unknown identifier: {}", name),
-            Some(type_) => return Ok(Expr::new(ExprCode::Identifier(name), type_)),
+            Some(typ) => Ok(Expr::new(ExprCode::Identifier(name), typ)),
         }
     }
 
     pub fn eq(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
-        if lhs.type_ != rhs.type_ {
-            err!("cannot compare {} and {}", lhs.type_, rhs.type_)
+        if lhs.typ != rhs.typ {
+            err!("cannot compare {} and {}", lhs.typ, rhs.typ)
         } else {
             Ok(Expr::new(ExprCode::Eq(Box::new(lhs), Box::new(rhs)), BOOL))
         }
     }
 
     pub fn ne(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
-        if lhs.type_ != rhs.type_ {
-            err!("cannot compare {} and {}", lhs.type_, rhs.type_)
+        if lhs.typ != rhs.typ {
+            err!("cannot compare {} and {}", lhs.typ, rhs.typ)
         } else {
             Ok(Expr::new(ExprCode::Ne(Box::new(lhs), Box::new(rhs)), BOOL))
         }
     }
 
     pub fn lt(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
-        if lhs.type_ != rhs.type_ {
-            err!("cannot compare {} and {}", lhs.type_, rhs.type_)
+        if lhs.typ != rhs.typ {
+            err!("cannot compare {} and {}", lhs.typ, rhs.typ)
         } else {
             Ok(Expr::new(ExprCode::Lt(Box::new(lhs), Box::new(rhs)), BOOL))
         }
     }
 
     pub fn le(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
-        if lhs.type_ != rhs.type_ {
-            err!("cannot compare {} and {}", lhs.type_, rhs.type_)
+        if lhs.typ != rhs.typ {
+            err!("cannot compare {} and {}", lhs.typ, rhs.typ)
         } else {
             Ok(Expr::new(ExprCode::Le(Box::new(lhs), Box::new(rhs)), BOOL))
         }
     }
 
     pub fn gt(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
-        if lhs.type_ != rhs.type_ {
-            err!("cannot compare {} and {}", lhs.type_, rhs.type_)
+        if lhs.typ != rhs.typ {
+            err!("cannot compare {} and {}", lhs.typ, rhs.typ)
         } else {
             Ok(Expr::new(ExprCode::Gt(Box::new(lhs), Box::new(rhs)), BOOL))
         }
     }
 
     pub fn ge(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
-        if lhs.type_ != rhs.type_ {
-            err!("cannot compare {} and {}", lhs.type_, rhs.type_)
+        if lhs.typ != rhs.typ {
+            err!("cannot compare {} and {}", lhs.typ, rhs.typ)
         } else {
             Ok(Expr::new(ExprCode::Ge(Box::new(lhs), Box::new(rhs)), BOOL))
         }
     }
 
     pub fn add(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
-        if lhs.type_ != rhs.type_ {
-            err!("cannot add {} and {}", lhs.type_, rhs.type_)
+        if lhs.typ != rhs.typ {
+            err!("cannot add {} and {}", lhs.typ, rhs.typ)
         } else {
-            let type_ = lhs.type_;
-            Ok(Expr::new(
-                ExprCode::Add(Box::new(lhs), Box::new(rhs)),
-                type_,
-            ))
+            let typ = lhs.typ;
+            Ok(Expr::new(ExprCode::Add(Box::new(lhs), Box::new(rhs)), typ))
         }
     }
 
     pub fn sub(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
-        if lhs.type_ != rhs.type_ {
-            err!("cannot subtract {} and {}", lhs.type_, rhs.type_)
+        if lhs.typ != rhs.typ {
+            err!("cannot subtract {} and {}", lhs.typ, rhs.typ)
         } else {
-            let type_ = lhs.type_;
-            Ok(Expr::new(
-                ExprCode::Sub(Box::new(lhs), Box::new(rhs)),
-                type_,
-            ))
+            let typ = lhs.typ;
+            Ok(Expr::new(ExprCode::Sub(Box::new(lhs), Box::new(rhs)), typ))
         }
     }
 
     pub fn mul(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
-        if lhs.type_ != rhs.type_ {
-            err!("cannot multiply {} and {}", lhs.type_, rhs.type_)
+        if lhs.typ != rhs.typ {
+            err!("cannot multiply {} and {}", lhs.typ, rhs.typ)
         } else {
-            let type_ = lhs.type_;
-            Ok(Expr::new(
-                ExprCode::Mul(Box::new(lhs), Box::new(rhs)),
-                type_,
-            ))
+            let typ = lhs.typ;
+            Ok(Expr::new(ExprCode::Mul(Box::new(lhs), Box::new(rhs)), typ))
         }
     }
 
     pub fn div(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
-        if lhs.type_ != rhs.type_ {
-            err!("cannot divide {} and {}", lhs.type_, rhs.type_)
+        if lhs.typ != rhs.typ {
+            err!("cannot divide {} and {}", lhs.typ, rhs.typ)
         } else {
-            let type_ = lhs.type_;
-            Ok(Expr::new(
-                ExprCode::Div(Box::new(lhs), Box::new(rhs)),
-                type_,
-            ))
+            let typ = lhs.typ;
+            Ok(Expr::new(ExprCode::Div(Box::new(lhs), Box::new(rhs)), typ))
         }
     }
 
@@ -558,14 +570,8 @@ impl<'a> CodeBlock<'a> {
         let fn_name = name.into();
         if let Some(func) = self.state.lock().extern_funcs.get(&fn_name) {
             for ((i, t1), t2) in params.iter().enumerate().zip(func.params.iter()) {
-                if t1.type_ != *t2 {
-                    return err!(
-                        "Func {} need {} as arg{}, get {}",
-                        &fn_name,
-                        t2,
-                        i,
-                        t1.type_
-                    );
+                if t1.typ != *t2 {
+                    return err!("Func {} need {} as arg{}, get {}", &fn_name, t2, i, t1.typ);
                 }
             }
             Ok(Expr::new(
@@ -593,7 +599,7 @@ impl Display for GeneratedFunction {
         } else {
             write!(f, "()")?;
         }
-        write!(f, " {{\n")?;
+        writeln!(f, " {{")?;
         for stmt in &self.body {
             stmt.fmt_ident(4, f)?;
         }
@@ -606,7 +612,7 @@ impl Stmt {
     pub fn fmt_ident(&self, ident: usize, f: &mut Formatter) -> std::fmt::Result {
         let mut ident_str = String::new();
         for _ in 0..ident {
-            ident_str.push_str(" ");
+            ident_str.push(' ');
         }
         match self {
             Stmt::IfElse(cond, then_stmts, else_stmts) => {
@@ -678,15 +684,15 @@ impl Display for Expr {
     }
 }
 
-impl std::fmt::Display for Type {
+impl std::fmt::Display for JitType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
-impl std::fmt::Debug for Type {
+impl std::fmt::Debug for JitType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.1 {
+        match self.code {
             0 => write!(f, "nil"),
             1 => write!(f, "bool"),
             2 => write!(f, "i8"),
@@ -702,7 +708,7 @@ impl std::fmt::Debug for Type {
     }
 }
 
-impl From<&str> for Type {
+impl From<&str> for JitType {
     fn from(x: &str) -> Self {
         match x {
             "bool" => BOOL,

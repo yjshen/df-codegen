@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 mod api;
 mod error;
 mod jit;
@@ -6,7 +7,7 @@ mod jit;
 mod tests {
     use crate::api::{Assembler, GeneratedFunction, I64};
     use crate::error::Result;
-    use crate::jit::JIT;
+    use crate::jit::Jit;
 
     #[test]
     fn iterative_fib() -> Result<()> {
@@ -67,7 +68,7 @@ mod tests {
         Ok(())
     }
 
-    unsafe fn run_code<I, O>(jit: &mut JIT, code: GeneratedFunction, input: I) -> Result<O> {
+    unsafe fn run_code<I, O>(jit: &mut Jit, code: GeneratedFunction, input: I) -> Result<O> {
         // Pass the string to the JIT, and it returns a raw pointer to machine code.
         let code_ptr = jit.compile(code)?;
         // Cast the raw pointer to a typed function pointer. This is unsafe, because
@@ -79,7 +80,7 @@ mod tests {
     }
 
     fn run_iterative_fib_code(
-        jit: &mut JIT,
+        jit: &mut Jit,
         code: GeneratedFunction,
         input: isize,
     ) -> Result<isize> {

@@ -1,4 +1,4 @@
-use crate::api::{Expr, ExprCode, GeneratedFunction, Stmt};
+use crate::api::{Expr, ExprCode, GeneratedFunction, JitType, Stmt, I64};
 use crate::error::{DataFusionError, Result};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::slice;
 
 /// The basic JIT class.
-pub struct JIT {
+pub struct Jit {
     /// The function builder context, which is reused across multiple
     /// FunctionBuilder instances.
     builder_context: FunctionBuilderContext,
@@ -25,7 +25,7 @@ pub struct JIT {
     module: JITModule,
 }
 
-impl Default for JIT {
+impl Default for Jit {
     fn default() -> Self {
         let builder = JITBuilder::new(cranelift_module::default_libcall_names());
         let module = JITModule::new(builder);
@@ -38,7 +38,7 @@ impl Default for JIT {
     }
 }
 
-impl JIT {
+impl Jit {
     pub fn new<It, K>(symbols: It) -> Self
     where
         It: IntoIterator<Item = (K, *const u8)>,
@@ -63,7 +63,8 @@ impl JIT {
             body,
             ret,
         } = func;
-        // Then, translate the AST nodes into Cranelift IR.
+
+        // Translate the AST nodes into Cranelift IR.
         self.translate(params, ret, body)?;
 
         // Next, declare the function to jit. Functions must be declared
@@ -117,12 +118,16 @@ impl JIT {
     // Translate into Cranelift IR.
     fn translate(
         &mut self,
-        params: Vec<(String, crate::api::Type)>,
-        the_return: Option<(String, crate::api::Type)>,
+        params: Vec<(String, JitType)>,
+        the_return: Option<(String, JitType)>,
         stmts: Vec<Stmt>,
     ) -> Result<()> {
         for nt in &params {
-            self.ctx.func.signature.params.push(AbiParam::new(nt.1 .0));
+            self.ctx
+                .func
+                .signature
+                .params
+                .push(AbiParam::new(nt.1.native));
         }
 
         let mut void_return: bool = false;
@@ -136,7 +141,7 @@ impl JIT {
                     .func
                     .signature
                     .returns
-                    .push(AbiParam::new(ret.1 .0));
+                    .push(AbiParam::new(ret.1.native));
             }
         }
 
@@ -225,7 +230,7 @@ impl<'a> FunctionTranslator<'a> {
             ExprCode::Literal(literal) => {
                 // TODO: this should be a type matching cast
                 let i = literal.parse::<i64>().unwrap();
-                self.builder.ins().iconst(expr.type_.0, i)
+                self.builder.ins().iconst(expr.typ.native, i)
             }
 
             ExprCode::Identifier(name) => {
@@ -284,7 +289,7 @@ impl<'a> FunctionTranslator<'a> {
         let lhs = self.translate_expr(lhs);
         let rhs = self.translate_expr(rhs);
         let c = self.builder.ins().icmp(cmp, lhs, rhs);
-        self.builder.ins().bint(crate::api::I64.0, c)
+        self.builder.ins().bint(I64.native, c)
     }
 
     fn translate_if_else(&mut self, condition: Expr, then_body: Vec<Stmt>, else_body: Vec<Stmt>) {
@@ -361,19 +366,17 @@ impl<'a> FunctionTranslator<'a> {
 
         // Add a parameter for each argument.
         for arg in &args {
-            sig.params.push(AbiParam::new(arg.type_.0));
+            sig.params.push(AbiParam::new(arg.typ.native));
         }
 
         // For simplicity for now, just make all calls return a single I64.
-        sig.returns.push(AbiParam::new(crate::api::I64.0));
+        sig.returns.push(AbiParam::new(I64.native));
 
         let callee = self
             .module
             .declare_function(&name, Linkage::Import, &sig)
             .expect("problem declaring function");
-        let local_callee = self
-            .module
-            .declare_func_in_func(callee, &mut self.builder.func);
+        let local_callee = self.module.declare_func_in_func(callee, self.builder.func);
 
         let mut arg_values = Vec::new();
         for arg in args {
@@ -388,9 +391,7 @@ impl<'a> FunctionTranslator<'a> {
             .module
             .declare_data(&name, Linkage::Export, true, false)
             .expect("problem declaring data object");
-        let local_id = self
-            .module
-            .declare_data_in_func(sym, &mut self.builder.func);
+        let local_id = self.module.declare_data_in_func(sym, self.builder.func);
 
         let pointer = self.module.target_config().pointer_type();
         self.builder.ins().symbol_value(pointer, local_id)
@@ -399,8 +400,8 @@ impl<'a> FunctionTranslator<'a> {
 
 fn declare_variables(
     builder: &mut FunctionBuilder,
-    params: &[(String, crate::api::Type)],
-    the_return: &Option<(String, crate::api::Type)>,
+    params: &[(String, JitType)],
+    the_return: &Option<(String, JitType)>,
     stmts: &[Stmt],
     entry_block: Block,
 ) -> HashMap<String, Variable> {
@@ -416,7 +417,7 @@ fn declare_variables(
     match the_return {
         None => {}
         Some(ret) => {
-            let zero = builder.ins().iconst(ret.1 .0, 0);
+            let zero = builder.ins().iconst(ret.1.native, 0);
             let return_variable =
                 declare_variable(builder, &mut variables, &mut index, &ret.0, ret.1);
             builder.def_var(return_variable, zero);
@@ -452,8 +453,8 @@ fn declare_variables_in_stmt(
                 declare_variables_in_stmt(builder, variables, index, stmt);
             }
         }
-        Stmt::Declare(ref name, type_) => {
-            declare_variable(builder, variables, index, name, type_);
+        Stmt::Declare(ref name, typ) => {
+            declare_variable(builder, variables, index, name, typ);
         }
         _ => {}
     }
@@ -465,12 +466,12 @@ fn declare_variable(
     variables: &mut HashMap<String, Variable>,
     index: &mut usize,
     name: &str,
-    type_: crate::api::Type,
+    typ: JitType,
 ) -> Variable {
     let var = Variable::new(*index);
     if !variables.contains_key(name) {
         variables.insert(name.into(), var);
-        builder.declare_var(var, type_.0);
+        builder.declare_var(var, typ.native);
         *index += 1;
     }
     var
