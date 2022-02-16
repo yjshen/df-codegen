@@ -1,8 +1,8 @@
 #![allow(dead_code)]
-mod api;
-mod ast;
-mod error;
-mod jit;
+pub mod api;
+pub mod ast;
+pub mod error;
+pub mod jit;
 
 #[cfg(test)]
 mod tests {
