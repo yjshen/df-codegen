@@ -113,3 +113,10 @@ impl Display for DataFusionError {
 }
 
 impl error::Error for DataFusionError {}
+
+#[macro_export]
+macro_rules! internal_err {
+    ($($arg:tt)*) => {
+        Err(DataFusionError::Internal(format!($($arg)*)))
+    };
+}

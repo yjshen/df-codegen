@@ -1,17 +1,12 @@
 use crate::api::GeneratedFunction;
 use crate::ast::{BinaryExpr, Expr, JITType, Literal, Stmt, TypedLit, BOOL, I64};
 use crate::error::{DataFusionError, Result};
+use crate::internal_err;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
 use std::collections::HashMap;
 use std::slice;
-
-macro_rules! err {
-    ($($arg:tt)*) => {
-        Err(DataFusionError::Internal(format!($($arg)*)))
-    };
-}
 
 /// The basic JIT class.
 #[allow(clippy::upper_case_acronyms)]
@@ -80,16 +75,13 @@ impl JIT {
         // before they can be called, or defined.
         let id = self
             .module
-            .declare_function(&name, Linkage::Export, &self.ctx.func.signature)
-            .map_err(DataFusionError::JITError)?;
+            .declare_function(&name, Linkage::Export, &self.ctx.func.signature)?;
 
         // Define the function to jit. This finishes compilation, although
         // there may be outstanding relocations to perform. Currently, jit
         // cannot finish relocations until all functions to be called are
         // defined. For now, we'll just finalize the function below.
-        self.module
-            .define_function(id, &mut self.ctx)
-            .map_err(DataFusionError::JITError)?;
+        self.module.define_function(id, &mut self.ctx)?;
 
         // Now that compilation is finished, we can clear out the context state.
         self.module.clear_context(&mut self.ctx);
@@ -112,12 +104,9 @@ impl JIT {
         self.data_ctx.define(contents.into_boxed_slice());
         let id = self
             .module
-            .declare_data(name, Linkage::Export, true, false)
-            .map_err(DataFusionError::JITError)?;
+            .declare_data(name, Linkage::Export, true, false)?;
 
-        self.module
-            .define_data(id, &self.data_ctx)
-            .map_err(DataFusionError::JITError)?;
+        self.module.define_data(id, &self.data_ctx)?;
         self.data_ctx.clear();
         self.module.finalize_definitions();
         let buffer = self.module.get_finalized_data(id);
@@ -276,7 +265,7 @@ impl<'a> FunctionTranslator<'a> {
                 } else if ty.code == 0x7b || ty.code == 0x7c {
                     self.translate_fcmp(FloatCC::Equal, *lhs, *rhs)
                 } else {
-                    err!("Unsupported type {} for equal comparison", ty)
+                    internal_err!("Unsupported type {} for equal comparison", ty)
                 }
             }
             BinaryExpr::Ne(lhs, rhs) => {
@@ -286,7 +275,7 @@ impl<'a> FunctionTranslator<'a> {
                 } else if ty.code == 0x7b || ty.code == 0x7c {
                     self.translate_fcmp(FloatCC::NotEqual, *lhs, *rhs)
                 } else {
-                    err!("Unsupported type {} for not equal comparison", ty)
+                    internal_err!("Unsupported type {} for not equal comparison", ty)
                 }
             }
             BinaryExpr::Lt(lhs, rhs) => {
@@ -296,7 +285,7 @@ impl<'a> FunctionTranslator<'a> {
                 } else if ty.code == 0x7b || ty.code == 0x7c {
                     self.translate_fcmp(FloatCC::LessThan, *lhs, *rhs)
                 } else {
-                    err!("Unsupported type {} for less than comparison", ty)
+                    internal_err!("Unsupported type {} for less than comparison", ty)
                 }
             }
             BinaryExpr::Le(lhs, rhs) => {
@@ -306,7 +295,7 @@ impl<'a> FunctionTranslator<'a> {
                 } else if ty.code == 0x7b || ty.code == 0x7c {
                     self.translate_fcmp(FloatCC::LessThanOrEqual, *lhs, *rhs)
                 } else {
-                    err!("Unsupported type {} for less than or equal comparison", ty)
+                    internal_err!("Unsupported type {} for less than or equal comparison", ty)
                 }
             }
             BinaryExpr::Gt(lhs, rhs) => {
@@ -316,7 +305,7 @@ impl<'a> FunctionTranslator<'a> {
                 } else if ty.code == 0x7b || ty.code == 0x7c {
                     self.translate_fcmp(FloatCC::GreaterThan, *lhs, *rhs)
                 } else {
-                    err!("Unsupported type {} for greater than comparison", ty)
+                    internal_err!("Unsupported type {} for greater than comparison", ty)
                 }
             }
             BinaryExpr::Ge(lhs, rhs) => {
@@ -326,7 +315,7 @@ impl<'a> FunctionTranslator<'a> {
                 } else if ty.code == 0x7b || ty.code == 0x7c {
                     self.translate_fcmp(FloatCC::GreaterThanOrEqual, *lhs, *rhs)
                 } else {
-                    err!(
+                    internal_err!(
                         "Unsupported type {} for greater than or equal comparison",
                         ty
                     )
@@ -341,7 +330,7 @@ impl<'a> FunctionTranslator<'a> {
                 } else if ty.code == 0x7b || ty.code == 0x7c {
                     Ok(self.builder.ins().fadd(lhs, rhs))
                 } else {
-                    err!("Unsupported type {} for add", ty)
+                    internal_err!("Unsupported type {} for add", ty)
                 }
             }
             BinaryExpr::Sub(lhs, rhs) => {
@@ -353,7 +342,7 @@ impl<'a> FunctionTranslator<'a> {
                 } else if ty.code == 0x7b || ty.code == 0x7c {
                     Ok(self.builder.ins().fsub(lhs, rhs))
                 } else {
-                    err!("Unsupported type {} for sub", ty)
+                    internal_err!("Unsupported type {} for sub", ty)
                 }
             }
             BinaryExpr::Mul(lhs, rhs) => {
@@ -365,7 +354,7 @@ impl<'a> FunctionTranslator<'a> {
                 } else if ty.code == 0x7b || ty.code == 0x7c {
                     Ok(self.builder.ins().fmul(lhs, rhs))
                 } else {
-                    err!("Unsupported type {} for mul", ty)
+                    internal_err!("Unsupported type {} for mul", ty)
                 }
             }
             BinaryExpr::Div(lhs, rhs) => {
@@ -377,7 +366,7 @@ impl<'a> FunctionTranslator<'a> {
                 } else if ty.code == 0x7b || ty.code == 0x7c {
                     Ok(self.builder.ins().fdiv(lhs, rhs))
                 } else {
-                    err!("Unsupported type {} for div", ty)
+                    internal_err!("Unsupported type {} for div", ty)
                 }
             }
         }
@@ -413,7 +402,7 @@ impl<'a> FunctionTranslator<'a> {
                 let f = lit.parse::<f64>().unwrap();
                 Ok(self.builder.ins().f64const(f))
             }
-            _ => err!("Unsupported type {} for string literal", ty),
+            _ => internal_err!("Unsupported type {} for string literal", ty),
         }
     }
 

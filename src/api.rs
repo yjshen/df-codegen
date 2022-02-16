@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::error::{DataFusionError, Result};
+use crate::internal_err;
 use crate::jit::JIT;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -42,12 +43,6 @@ impl AssemblerState {
     }
 }
 
-macro_rules! err {
-    ($($arg:tt)*) => {
-        Err(DataFusionError::Internal(format!($($arg)*)))
-    };
-}
-
 pub struct Assembler {
     pub state: Arc<Mutex<AssemblerState>>,
 }
@@ -82,7 +77,7 @@ impl Assembler {
 
         match old {
             None => Ok(()),
-            Some(old) => err!("Extern function {} already exists", old.name),
+            Some(old) => internal_err!("Extern function {} already exists", old.name),
         }
     }
 
@@ -247,7 +242,7 @@ impl<'a> CodeBlock<'a> {
         let name = name.into();
         let typ = self.fields.back().unwrap().get(&name);
         match typ {
-            Some(typ) => err!(
+            Some(typ) => internal_err!(
                 "Variable {} of {} already exists in the current scope",
                 name,
                 typ
@@ -277,7 +272,7 @@ impl<'a> CodeBlock<'a> {
         match typ {
             Some(typ) => {
                 if typ != expr.get_type() {
-                    err!(
+                    internal_err!(
                         "Variable {} of {} cannot be assigned to {}",
                         name,
                         typ,
@@ -288,7 +283,7 @@ impl<'a> CodeBlock<'a> {
                     Ok(())
                 }
             }
-            None => err!("unknown identifier: {}", name),
+            None => internal_err!("unknown identifier: {}", name),
         }
     }
 
@@ -297,7 +292,7 @@ impl<'a> CodeBlock<'a> {
         let typ = self.fields.back().unwrap().get(&name);
         match typ {
             Some(typ) => {
-                err!(
+                internal_err!(
                     "Variable {} of {} already exists in the current scope",
                     name,
                     typ
@@ -323,7 +318,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn while_loop(&mut self, cond: Expr) -> Result<CodeBlock> {
         if cond.get_type() != BOOL {
-            err!("while condition must be bool")
+            internal_err!("while condition must be bool")
         } else {
             self.fields.push_back(HashMap::new());
             Ok(CodeBlock {
@@ -339,7 +334,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn if_else(&mut self, cond: Expr) -> Result<CodeBlock> {
         if cond.get_type() != BOOL {
-            err!("if condition must be bool")
+            internal_err!("if condition must be bool")
         } else {
             self.fields.push_back(HashMap::new());
             Ok(CodeBlock {
@@ -409,14 +404,14 @@ impl<'a> CodeBlock<'a> {
     pub fn id(&self, name: impl Into<String>) -> Result<Expr> {
         let name = name.into();
         match self.find_type(&name) {
-            None => err!("unknown identifier: {}", name),
+            None => internal_err!("unknown identifier: {}", name),
             Some(typ) => Ok(Expr::Identifier(name, typ)),
         }
     }
 
     pub fn eq(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
-            err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
+            internal_err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
             Ok(Expr::Binary(BinaryExpr::Eq(Box::new(lhs), Box::new(rhs))))
         }
@@ -424,7 +419,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn ne(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
-            err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
+            internal_err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
             Ok(Expr::Binary(BinaryExpr::Ne(Box::new(lhs), Box::new(rhs))))
         }
@@ -432,7 +427,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn lt(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
-            err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
+            internal_err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
             Ok(Expr::Binary(BinaryExpr::Lt(Box::new(lhs), Box::new(rhs))))
         }
@@ -440,7 +435,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn le(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
-            err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
+            internal_err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
             Ok(Expr::Binary(BinaryExpr::Le(Box::new(lhs), Box::new(rhs))))
         }
@@ -448,7 +443,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn gt(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
-            err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
+            internal_err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
             Ok(Expr::Binary(BinaryExpr::Gt(Box::new(lhs), Box::new(rhs))))
         }
@@ -456,7 +451,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn ge(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
-            err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
+            internal_err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
             Ok(Expr::Binary(BinaryExpr::Ge(Box::new(lhs), Box::new(rhs))))
         }
@@ -464,7 +459,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn add(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
-            err!("cannot add {} and {}", lhs.get_type(), rhs.get_type())
+            internal_err!("cannot add {} and {}", lhs.get_type(), rhs.get_type())
         } else {
             Ok(Expr::Binary(BinaryExpr::Add(Box::new(lhs), Box::new(rhs))))
         }
@@ -472,7 +467,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn sub(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
-            err!("cannot subtract {} and {}", lhs.get_type(), rhs.get_type())
+            internal_err!("cannot subtract {} and {}", lhs.get_type(), rhs.get_type())
         } else {
             Ok(Expr::Binary(BinaryExpr::Sub(Box::new(lhs), Box::new(rhs))))
         }
@@ -480,7 +475,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn mul(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
-            err!("cannot multiply {} and {}", lhs.get_type(), rhs.get_type())
+            internal_err!("cannot multiply {} and {}", lhs.get_type(), rhs.get_type())
         } else {
             Ok(Expr::Binary(BinaryExpr::Mul(Box::new(lhs), Box::new(rhs))))
         }
@@ -488,7 +483,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn div(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
-            err!("cannot divide {} and {}", lhs.get_type(), rhs.get_type())
+            internal_err!("cannot divide {} and {}", lhs.get_type(), rhs.get_type())
         } else {
             Ok(Expr::Binary(BinaryExpr::Div(Box::new(lhs), Box::new(rhs))))
         }
@@ -499,7 +494,7 @@ impl<'a> CodeBlock<'a> {
         if let Some(func) = self.state.lock().extern_funcs.get(&fn_name) {
             for ((i, t1), t2) in params.iter().enumerate().zip(func.params.iter()) {
                 if t1.get_type() != *t2 {
-                    return err!(
+                    return internal_err!(
                         "Func {} need {} as arg{}, get {}",
                         &fn_name,
                         t2,
@@ -510,7 +505,7 @@ impl<'a> CodeBlock<'a> {
             }
             Ok(Expr::Call(fn_name, params, func.returns.unwrap_or(NIL)))
         } else {
-            err!("No func with the name {} exist", fn_name)
+            internal_err!("No func with the name {} exist", fn_name)
         }
     }
 }
