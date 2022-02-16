@@ -1,11 +1,17 @@
 use crate::api::GeneratedFunction;
-use crate::ast::{JITType, NewExpr, Stmt, TypedLit, BOOL, I64};
+use crate::ast::{BinaryExpr, Expr, JITType, Literal, Stmt, TypedLit, BOOL, I64};
 use crate::error::{DataFusionError, Result};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module};
 use std::collections::HashMap;
 use std::slice;
+
+macro_rules! err {
+    ($($arg:tt)*) => {
+        Err(DataFusionError::Internal(format!($($arg)*)))
+    };
+}
 
 /// The basic JIT class.
 #[allow(clippy::upper_case_acronyms)]
@@ -176,7 +182,7 @@ impl JIT {
             module: &mut self.module,
         };
         for stmt in stmts {
-            trans.translate_stmt(stmt);
+            trans.translate_stmt(stmt)?;
         }
 
         if !void_return {
@@ -210,7 +216,7 @@ struct FunctionTranslator<'a> {
 }
 
 impl<'a> FunctionTranslator<'a> {
-    fn translate_stmt(&mut self, stmt: Stmt) {
+    fn translate_stmt(&mut self, stmt: Stmt) -> Result<()> {
         match stmt {
             Stmt::IfElse(condition, then_body, else_body) => {
                 self.translate_if_else(*condition, then_body, else_body)
@@ -220,9 +226,10 @@ impl<'a> FunctionTranslator<'a> {
             }
             Stmt::Assign(name, expr) => self.translate_assign(name, *expr),
             Stmt::SideEffect(expr) => {
-                self.translate_expr(*expr);
+                self.translate_expr(*expr)?;
+                Ok(())
             }
-            Stmt::Declare(_, _) => {}
+            Stmt::Declare(_, _) => Ok(()),
         }
     }
 
@@ -237,80 +244,210 @@ impl<'a> FunctionTranslator<'a> {
 
     /// When you write out instructions in Cranelift, you get back `Value`s. You
     /// can then use these references in other instructions.
-    fn translate_expr(&mut self, expr: NewExpr) -> Value {
-        match expr.code {
-            ExprCode::Literal(literal) => {
-                // TODO: this should be a type matching cast
-                let i = literal.parse::<i64>().unwrap();
-                self.builder.ins().iconst(expr.get_type().native, i)
-            }
-            ExprCode::TypedLiteral(tl) => self.translate_typed_lit(tl),
-            ExprCode::Identifier(name) => {
+    fn translate_expr(&mut self, expr: Expr) -> Result<Value> {
+        match expr {
+            Expr::Literal(nl) => self.translate_literal(nl),
+            Expr::Identifier(name, _) => {
                 // `use_var` is used to read the value of a variable.
-                let variable = self.variables.get(&name).expect("variable not defined");
-                self.builder.use_var(*variable)
+                let variable = self
+                    .variables
+                    .get(&name)
+                    .ok_or_else(|| DataFusionError::Internal("variable not defined".to_owned()))?;
+                Ok(self.builder.use_var(*variable))
             }
-
-            ExprCode::Eq(lhs, rhs) => self.translate_icmp(IntCC::Equal, *lhs, *rhs),
-            ExprCode::Ne(lhs, rhs) => self.translate_icmp(IntCC::NotEqual, *lhs, *rhs),
-            ExprCode::Lt(lhs, rhs) => self.translate_icmp(IntCC::SignedLessThan, *lhs, *rhs),
-            ExprCode::Le(lhs, rhs) => self.translate_icmp(IntCC::SignedLessThanOrEqual, *lhs, *rhs),
-            ExprCode::Gt(lhs, rhs) => self.translate_icmp(IntCC::SignedGreaterThan, *lhs, *rhs),
-            ExprCode::Ge(lhs, rhs) => {
-                self.translate_icmp(IntCC::SignedGreaterThanOrEqual, *lhs, *rhs)
-            }
-
-            ExprCode::Add(lhs, rhs) => {
-                let lhs = self.translate_expr(*lhs);
-                let rhs = self.translate_expr(*rhs);
-                self.builder.ins().iadd(lhs, rhs)
-            }
-
-            ExprCode::Sub(lhs, rhs) => {
-                let lhs = self.translate_expr(*lhs);
-                let rhs = self.translate_expr(*rhs);
-                self.builder.ins().isub(lhs, rhs)
-            }
-
-            ExprCode::Mul(lhs, rhs) => {
-                let lhs = self.translate_expr(*lhs);
-                let rhs = self.translate_expr(*rhs);
-                self.builder.ins().imul(lhs, rhs)
-            }
-
-            ExprCode::Div(lhs, rhs) => {
-                let lhs = self.translate_expr(*lhs);
-                let rhs = self.translate_expr(*rhs);
-                self.builder.ins().udiv(lhs, rhs)
-            }
-
-            ExprCode::Call(name, args) => self.translate_call(name, args),
+            Expr::Binary(b) => self.translate_binary_expr(b),
+            Expr::Call(name, args, ret) => self.translate_call(name, args, ret),
         }
     }
 
-    fn translate_assign(&mut self, name: String, expr: NewExpr) {
+    fn translate_literal(&mut self, expr: Literal) -> Result<Value> {
+        match expr {
+            Literal::Parsing(literal, ty) => self.translate_string_lit(literal, ty),
+            Literal::Typed(lt) => Ok(self.translate_typed_lit(lt)),
+        }
+    }
+
+    fn translate_binary_expr(&mut self, expr: BinaryExpr) -> Result<Value> {
+        match expr {
+            BinaryExpr::Eq(lhs, rhs) => {
+                let ty = lhs.get_type();
+                if ty.code >= 0x76 && ty.code <= 0x79 {
+                    self.translate_icmp(IntCC::Equal, *lhs, *rhs)
+                } else if ty.code == 0x7b || ty.code == 0x7c {
+                    self.translate_fcmp(FloatCC::Equal, *lhs, *rhs)
+                } else {
+                    err!("Unsupported type {} for equal comparison", ty)
+                }
+            }
+            BinaryExpr::Ne(lhs, rhs) => {
+                let ty = lhs.get_type();
+                if ty.code >= 0x76 && ty.code <= 0x79 {
+                    self.translate_icmp(IntCC::NotEqual, *lhs, *rhs)
+                } else if ty.code == 0x7b || ty.code == 0x7c {
+                    self.translate_fcmp(FloatCC::NotEqual, *lhs, *rhs)
+                } else {
+                    err!("Unsupported type {} for not equal comparison", ty)
+                }
+            }
+            BinaryExpr::Lt(lhs, rhs) => {
+                let ty = lhs.get_type();
+                if ty.code >= 0x76 && ty.code <= 0x79 {
+                    self.translate_icmp(IntCC::SignedLessThan, *lhs, *rhs)
+                } else if ty.code == 0x7b || ty.code == 0x7c {
+                    self.translate_fcmp(FloatCC::LessThan, *lhs, *rhs)
+                } else {
+                    err!("Unsupported type {} for less than comparison", ty)
+                }
+            }
+            BinaryExpr::Le(lhs, rhs) => {
+                let ty = lhs.get_type();
+                if ty.code >= 0x76 && ty.code <= 0x79 {
+                    self.translate_icmp(IntCC::SignedLessThanOrEqual, *lhs, *rhs)
+                } else if ty.code == 0x7b || ty.code == 0x7c {
+                    self.translate_fcmp(FloatCC::LessThanOrEqual, *lhs, *rhs)
+                } else {
+                    err!("Unsupported type {} for less than or equal comparison", ty)
+                }
+            }
+            BinaryExpr::Gt(lhs, rhs) => {
+                let ty = lhs.get_type();
+                if ty.code >= 0x76 && ty.code <= 0x79 {
+                    self.translate_icmp(IntCC::SignedGreaterThan, *lhs, *rhs)
+                } else if ty.code == 0x7b || ty.code == 0x7c {
+                    self.translate_fcmp(FloatCC::GreaterThan, *lhs, *rhs)
+                } else {
+                    err!("Unsupported type {} for greater than comparison", ty)
+                }
+            }
+            BinaryExpr::Ge(lhs, rhs) => {
+                let ty = lhs.get_type();
+                if ty.code >= 0x76 && ty.code <= 0x79 {
+                    self.translate_icmp(IntCC::SignedGreaterThanOrEqual, *lhs, *rhs)
+                } else if ty.code == 0x7b || ty.code == 0x7c {
+                    self.translate_fcmp(FloatCC::GreaterThanOrEqual, *lhs, *rhs)
+                } else {
+                    err!(
+                        "Unsupported type {} for greater than or equal comparison",
+                        ty
+                    )
+                }
+            }
+            BinaryExpr::Add(lhs, rhs) => {
+                let ty = lhs.get_type();
+                let lhs = self.translate_expr(*lhs)?;
+                let rhs = self.translate_expr(*rhs)?;
+                if ty.code >= 0x76 && ty.code <= 0x79 {
+                    Ok(self.builder.ins().iadd(lhs, rhs))
+                } else if ty.code == 0x7b || ty.code == 0x7c {
+                    Ok(self.builder.ins().fadd(lhs, rhs))
+                } else {
+                    err!("Unsupported type {} for add", ty)
+                }
+            }
+            BinaryExpr::Sub(lhs, rhs) => {
+                let ty = lhs.get_type();
+                let lhs = self.translate_expr(*lhs)?;
+                let rhs = self.translate_expr(*rhs)?;
+                if ty.code >= 0x76 && ty.code <= 0x79 {
+                    Ok(self.builder.ins().isub(lhs, rhs))
+                } else if ty.code == 0x7b || ty.code == 0x7c {
+                    Ok(self.builder.ins().fsub(lhs, rhs))
+                } else {
+                    err!("Unsupported type {} for sub", ty)
+                }
+            }
+            BinaryExpr::Mul(lhs, rhs) => {
+                let ty = lhs.get_type();
+                let lhs = self.translate_expr(*lhs)?;
+                let rhs = self.translate_expr(*rhs)?;
+                if ty.code >= 0x76 && ty.code <= 0x79 {
+                    Ok(self.builder.ins().imul(lhs, rhs))
+                } else if ty.code == 0x7b || ty.code == 0x7c {
+                    Ok(self.builder.ins().fmul(lhs, rhs))
+                } else {
+                    err!("Unsupported type {} for mul", ty)
+                }
+            }
+            BinaryExpr::Div(lhs, rhs) => {
+                let ty = lhs.get_type();
+                let lhs = self.translate_expr(*lhs)?;
+                let rhs = self.translate_expr(*rhs)?;
+                if ty.code >= 0x76 && ty.code <= 0x79 {
+                    Ok(self.builder.ins().udiv(lhs, rhs))
+                } else if ty.code == 0x7b || ty.code == 0x7c {
+                    Ok(self.builder.ins().fdiv(lhs, rhs))
+                } else {
+                    err!("Unsupported type {} for div", ty)
+                }
+            }
+        }
+    }
+
+    fn translate_string_lit(&mut self, lit: String, ty: JITType) -> Result<Value> {
+        match ty.code {
+            0x70 => {
+                let b = lit.parse::<bool>().unwrap();
+                Ok(self.builder.ins().bconst(ty.native, b))
+            }
+            0x76 => {
+                let i = lit.parse::<i8>().unwrap();
+                Ok(self.builder.ins().iconst(ty.native, i as i64))
+            }
+            0x77 => {
+                let i = lit.parse::<i16>().unwrap();
+                Ok(self.builder.ins().iconst(ty.native, i as i64))
+            }
+            0x78 => {
+                let i = lit.parse::<i32>().unwrap();
+                Ok(self.builder.ins().iconst(ty.native, i as i64))
+            }
+            0x79 => {
+                let i = lit.parse::<i64>().unwrap();
+                Ok(self.builder.ins().iconst(ty.native, i))
+            }
+            0x7b => {
+                let f = lit.parse::<f32>().unwrap();
+                Ok(self.builder.ins().f32const(f))
+            }
+            0x7c => {
+                let f = lit.parse::<f64>().unwrap();
+                Ok(self.builder.ins().f64const(f))
+            }
+            _ => err!("Unsupported type {} for string literal", ty),
+        }
+    }
+
+    fn translate_assign(&mut self, name: String, expr: Expr) -> Result<()> {
         // `def_var` is used to write the value of a variable. Note that
         // variables can have multiple definitions. Cranelift will
         // convert them into SSA form for itself automatically.
-        let new_value = self.translate_expr(expr);
+        let new_value = self.translate_expr(expr)?;
         let variable = self.variables.get(&*name).unwrap();
         self.builder.def_var(*variable, new_value);
+        Ok(())
     }
 
-    fn translate_icmp(&mut self, cmp: IntCC, lhs: NewExpr, rhs: NewExpr) -> Value {
-        let lhs = self.translate_expr(lhs);
-        let rhs = self.translate_expr(rhs);
+    fn translate_icmp(&mut self, cmp: IntCC, lhs: Expr, rhs: Expr) -> Result<Value> {
+        let lhs = self.translate_expr(lhs)?;
+        let rhs = self.translate_expr(rhs)?;
         let c = self.builder.ins().icmp(cmp, lhs, rhs);
-        self.builder.ins().bint(I64.native, c)
+        Ok(self.builder.ins().bint(I64.native, c))
+    }
+
+    fn translate_fcmp(&mut self, cmp: FloatCC, lhs: Expr, rhs: Expr) -> Result<Value> {
+        let lhs = self.translate_expr(lhs)?;
+        let rhs = self.translate_expr(rhs)?;
+        let c = self.builder.ins().fcmp(cmp, lhs, rhs);
+        Ok(self.builder.ins().bint(I64.native, c))
     }
 
     fn translate_if_else(
         &mut self,
-        condition: NewExpr,
+        condition: Expr,
         then_body: Vec<Stmt>,
         else_body: Vec<Stmt>,
-    ) {
-        let condition_value = self.translate_expr(condition);
+    ) -> Result<()> {
+        let condition_value = self.translate_expr(condition)?;
 
         let then_block = self.builder.create_block();
         let else_block = self.builder.create_block();
@@ -324,7 +461,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.switch_to_block(then_block);
         self.builder.seal_block(then_block);
         for stmt in then_body {
-            self.translate_stmt(stmt);
+            self.translate_stmt(stmt)?;
         }
 
         // Jump to the merge block, passing it the block return value.
@@ -333,7 +470,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.switch_to_block(else_block);
         self.builder.seal_block(else_block);
         for stmt in else_body {
-            self.translate_stmt(stmt);
+            self.translate_stmt(stmt)?;
         }
 
         // Jump to the merge block, passing it the block return value.
@@ -344,13 +481,10 @@ impl<'a> FunctionTranslator<'a> {
 
         // We've now seen all the predecessors of the merge block.
         self.builder.seal_block(merge_block);
-
-        // Read the value of the if-else by reading the merge block
-        // parameter.
-        // self.builder.block_params(merge_block)[0];
+        Ok(())
     }
 
-    fn translate_while_loop(&mut self, condition: NewExpr, loop_body: Vec<Stmt>) {
+    fn translate_while_loop(&mut self, condition: Expr, loop_body: Vec<Stmt>) -> Result<()> {
         let header_block = self.builder.create_block();
         let body_block = self.builder.create_block();
         let exit_block = self.builder.create_block();
@@ -358,7 +492,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.ins().jump(header_block, &[]);
         self.builder.switch_to_block(header_block);
 
-        let condition_value = self.translate_expr(condition);
+        let condition_value = self.translate_expr(condition)?;
         self.builder.ins().brz(condition_value, exit_block, &[]);
         self.builder.ins().jump(body_block, &[]);
 
@@ -366,7 +500,7 @@ impl<'a> FunctionTranslator<'a> {
         self.builder.seal_block(body_block);
 
         for stmt in loop_body {
-            self.translate_stmt(stmt);
+            self.translate_stmt(stmt)?;
         }
         self.builder.ins().jump(header_block, &[]);
 
@@ -376,9 +510,10 @@ impl<'a> FunctionTranslator<'a> {
         // more backedges to the header to exits to the bottom.
         self.builder.seal_block(header_block);
         self.builder.seal_block(exit_block);
+        Ok(())
     }
 
-    fn translate_call(&mut self, name: String, args: Vec<NewExpr>) -> Value {
+    fn translate_call(&mut self, name: String, args: Vec<Expr>, ret: JITType) -> Result<Value> {
         let mut sig = self.module.make_signature();
 
         // Add a parameter for each argument.
@@ -386,8 +521,7 @@ impl<'a> FunctionTranslator<'a> {
             sig.params.push(AbiParam::new(arg.get_type().native));
         }
 
-        // For simplicity for now, just make all calls return a single I64.
-        sig.returns.push(AbiParam::new(I64.native));
+        sig.returns.push(AbiParam::new(ret.native));
 
         let callee = self
             .module
@@ -397,10 +531,10 @@ impl<'a> FunctionTranslator<'a> {
 
         let mut arg_values = Vec::new();
         for arg in args {
-            arg_values.push(self.translate_expr(arg))
+            arg_values.push(self.translate_expr(arg)?)
         }
         let call = self.builder.ins().call(local_callee, &arg_values);
-        self.builder.inst_results(call)[0]
+        Ok(self.builder.inst_results(call)[0])
     }
 
     fn translate_global_data_addr(&mut self, name: String) -> Value {

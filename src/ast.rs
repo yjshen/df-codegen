@@ -3,10 +3,10 @@ use std::fmt::{Display, Formatter};
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
-    IfElse(Box<NewExpr>, Vec<Stmt>, Vec<Stmt>),
-    WhileLoop(Box<NewExpr>, Vec<Stmt>),
-    Assign(String, Box<NewExpr>),
-    SideEffect(Box<NewExpr>),
+    IfElse(Box<Expr>, Vec<Stmt>, Vec<Stmt>),
+    WhileLoop(Box<Expr>, Vec<Stmt>),
+    Assign(String, Box<Expr>),
+    SideEffect(Box<Expr>),
     Declare(String, JITType),
 }
 
@@ -19,29 +19,29 @@ pub enum TypedLit {
 }
 
 #[derive(Clone, Debug)]
-pub enum NewExpr {
-    Literal(NewLiteral),
+pub enum Expr {
+    Literal(Literal),
     Identifier(String, JITType),
     Binary(BinaryExpr),
-    Call(String, Vec<NewExpr>, JITType),
+    Call(String, Vec<Expr>, JITType),
 }
 
-impl NewExpr {
+impl Expr {
     pub fn get_type(&self) -> JITType {
         match self {
-            NewExpr::Literal(lit) => lit.get_type(),
-            NewExpr::Identifier(_, ty) => *ty,
-            NewExpr::Binary(bin) => bin.get_type(),
-            NewExpr::Call(_, _, ty) => *ty,
+            Expr::Literal(lit) => lit.get_type(),
+            Expr::Identifier(_, ty) => *ty,
+            Expr::Binary(bin) => bin.get_type(),
+            Expr::Call(_, _, ty) => *ty,
         }
     }
 }
 
-impl NewLiteral {
+impl Literal {
     fn get_type(&self) -> JITType {
         match self {
-            NewLiteral::Parsing(_, ty) => *ty,
-            NewLiteral::Typed(tl) => tl.get_type(),
+            Literal::Parsing(_, ty) => *ty,
+            Literal::Typed(tl) => tl.get_type(),
         }
     }
 }
@@ -60,12 +60,12 @@ impl TypedLit {
 impl BinaryExpr {
     fn get_type(&self) -> JITType {
         match self {
-            BinaryExpr::Eq(_, _, ty) => *ty,
-            BinaryExpr::Ne(_, _, ty) => *ty,
-            BinaryExpr::Lt(_, _, ty) => *ty,
-            BinaryExpr::Le(_, _, ty) => *ty,
-            BinaryExpr::Gt(_, _, ty) => *ty,
-            BinaryExpr::Ge(_, _, ty) => *ty,
+            BinaryExpr::Eq(_, _) => BOOL,
+            BinaryExpr::Ne(_, _) => BOOL,
+            BinaryExpr::Lt(_, _) => BOOL,
+            BinaryExpr::Le(_, _) => BOOL,
+            BinaryExpr::Gt(_, _) => BOOL,
+            BinaryExpr::Ge(_, _) => BOOL,
             BinaryExpr::Add(lhs, _) => lhs.get_type(),
             BinaryExpr::Sub(lhs, _) => lhs.get_type(),
             BinaryExpr::Mul(lhs, _) => lhs.get_type(),
@@ -76,20 +76,20 @@ impl BinaryExpr {
 
 #[derive(Clone, Debug)]
 pub enum BinaryExpr {
-    Eq(Box<NewExpr>, Box<NewExpr>, JITType),
-    Ne(Box<NewExpr>, Box<NewExpr>, JITType),
-    Lt(Box<NewExpr>, Box<NewExpr>, JITType),
-    Le(Box<NewExpr>, Box<NewExpr>, JITType),
-    Gt(Box<NewExpr>, Box<NewExpr>, JITType),
-    Ge(Box<NewExpr>, Box<NewExpr>, JITType),
-    Add(Box<NewExpr>, Box<NewExpr>),
-    Sub(Box<NewExpr>, Box<NewExpr>),
-    Mul(Box<NewExpr>, Box<NewExpr>),
-    Div(Box<NewExpr>, Box<NewExpr>),
+    Eq(Box<Expr>, Box<Expr>),
+    Ne(Box<Expr>, Box<Expr>),
+    Lt(Box<Expr>, Box<Expr>),
+    Le(Box<Expr>, Box<Expr>),
+    Gt(Box<Expr>, Box<Expr>),
+    Ge(Box<Expr>, Box<Expr>),
+    Add(Box<Expr>, Box<Expr>),
+    Sub(Box<Expr>, Box<Expr>),
+    Mul(Box<Expr>, Box<Expr>),
+    Div(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Clone, Debug)]
-pub enum NewLiteral {
+pub enum Literal {
     Parsing(String, JITType),
     Typed(TypedLit),
 }
@@ -188,13 +188,13 @@ impl Display for Stmt {
     }
 }
 
-impl Display for NewExpr {
+impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            NewExpr::Literal(l) => write!(f, "{}", l),
-            NewExpr::Identifier(name, _) => write!(f, "{}", name),
-            NewExpr::Binary(be) => write!(f, "{}", be),
-            NewExpr::Call(name, exprs, _) => {
+            Expr::Literal(l) => write!(f, "{}", l),
+            Expr::Identifier(name, _) => write!(f, "{}", name),
+            Expr::Binary(be) => write!(f, "{}", be),
+            Expr::Call(name, exprs, _) => {
                 write!(
                     f,
                     "{}({})",
@@ -210,11 +210,11 @@ impl Display for NewExpr {
     }
 }
 
-impl Display for NewLiteral {
+impl Display for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            NewLiteral::Parsing(str, _) => write!(f, "{}", str),
-            NewLiteral::Typed(tl) => write!(f, "{}", tl),
+            Literal::Parsing(str, _) => write!(f, "{}", str),
+            Literal::Typed(tl) => write!(f, "{}", tl),
         }
     }
 }
@@ -233,12 +233,12 @@ impl Display for TypedLit {
 impl Display for BinaryExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            BinaryExpr::Eq(lhs, rhs, _) => write!(f, "{} == {}", lhs, rhs),
-            BinaryExpr::Ne(lhs, rhs, _) => write!(f, "{} != {}", lhs, rhs),
-            BinaryExpr::Lt(lhs, rhs, _) => write!(f, "{} < {}", lhs, rhs),
-            BinaryExpr::Le(lhs, rhs, _) => write!(f, "{} <= {}", lhs, rhs),
-            BinaryExpr::Gt(lhs, rhs, _) => write!(f, "{} > {}", lhs, rhs),
-            BinaryExpr::Ge(lhs, rhs, _) => write!(f, "{} >= {}", lhs, rhs),
+            BinaryExpr::Eq(lhs, rhs) => write!(f, "{} == {}", lhs, rhs),
+            BinaryExpr::Ne(lhs, rhs) => write!(f, "{} != {}", lhs, rhs),
+            BinaryExpr::Lt(lhs, rhs) => write!(f, "{} < {}", lhs, rhs),
+            BinaryExpr::Le(lhs, rhs) => write!(f, "{} <= {}", lhs, rhs),
+            BinaryExpr::Gt(lhs, rhs) => write!(f, "{} > {}", lhs, rhs),
+            BinaryExpr::Ge(lhs, rhs) => write!(f, "{} >= {}", lhs, rhs),
             BinaryExpr::Add(lhs, rhs) => write!(f, "{} + {}", lhs, rhs),
             BinaryExpr::Sub(lhs, rhs) => write!(f, "{} - {}", lhs, rhs),
             BinaryExpr::Mul(lhs, rhs) => write!(f, "{} * {}", lhs, rhs),

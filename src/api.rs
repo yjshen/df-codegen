@@ -161,11 +161,11 @@ impl FunctionBuilder {
 }
 
 pub struct WhileState {
-    condition: NewExpr,
+    condition: Expr,
 }
 
 pub struct IfElseState {
-    condition: NewExpr,
+    condition: Expr,
     then_stmts: Vec<Stmt>,
     in_then: bool,
 }
@@ -271,7 +271,7 @@ impl<'a> CodeBlock<'a> {
         None
     }
 
-    pub fn assign(&mut self, name: impl Into<String>, expr: NewExpr) -> Result<()> {
+    pub fn assign(&mut self, name: impl Into<String>, expr: Expr) -> Result<()> {
         let name = name.into();
         let typ = self.find_type(&name);
         match typ {
@@ -292,7 +292,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn declare_as(&mut self, name: impl Into<String>, expr: NewExpr) -> Result<()> {
+    pub fn declare_as(&mut self, name: impl Into<String>, expr: Expr) -> Result<()> {
         let name = name.into();
         let typ = self.fields.back().unwrap().get(&name);
         match typ {
@@ -316,12 +316,12 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn run_expr(&mut self, expr: NewExpr) -> Result<()> {
+    pub fn run_expr(&mut self, expr: Expr) -> Result<()> {
         self.stmts.push(Stmt::SideEffect(Box::new(expr)));
         Ok(())
     }
 
-    pub fn while_loop(&mut self, cond: NewExpr) -> Result<CodeBlock> {
+    pub fn while_loop(&mut self, cond: Expr) -> Result<CodeBlock> {
         if cond.get_type() != BOOL {
             err!("while condition must be bool")
         } else {
@@ -337,7 +337,7 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn if_else(&mut self, cond: NewExpr) -> Result<CodeBlock> {
+    pub fn if_else(&mut self, cond: Expr) -> Result<CodeBlock> {
         if cond.get_type() != BOOL {
             err!("if condition must be bool")
         } else {
@@ -359,7 +359,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn if_block<C, T, E>(&mut self, mut cond: C, mut then_blk: T, mut else_blk: E) -> Result<()>
     where
-        C: FnMut(&mut CodeBlock) -> Result<NewExpr>,
+        C: FnMut(&mut CodeBlock) -> Result<Expr>,
         T: FnMut(&mut CodeBlock) -> Result<()>,
         E: FnMut(&mut CodeBlock) -> Result<()>,
     {
@@ -375,7 +375,7 @@ impl<'a> CodeBlock<'a> {
 
     pub fn while_block<C, B>(&mut self, mut cond: C, mut body_blk: B) -> Result<()>
     where
-        C: FnMut(&mut CodeBlock) -> Result<NewExpr>,
+        C: FnMut(&mut CodeBlock) -> Result<Expr>,
         B: FnMut(&mut CodeBlock) -> Result<()>,
     {
         let cond = cond(self)?;
@@ -386,151 +386,115 @@ impl<'a> CodeBlock<'a> {
         Ok(())
     }
 
-    pub fn lit(&self, val: impl Into<String>, ty: JITType) -> NewExpr {
-        NewExpr::Literal(NewLiteral::Parsing(val.into(), ty))
+    pub fn lit(&self, val: impl Into<String>, ty: JITType) -> Expr {
+        Expr::Literal(Literal::Parsing(val.into(), ty))
     }
 
-    pub fn lit_i(&self, val: impl Into<i64>) -> NewExpr {
-        NewExpr::Literal(NewLiteral::Typed(TypedLit::Int(val.into())))
+    pub fn lit_i(&self, val: impl Into<i64>) -> Expr {
+        Expr::Literal(Literal::Typed(TypedLit::Int(val.into())))
     }
 
-    pub fn lit_f(&self, val: f32) -> NewExpr {
-        NewExpr::Literal(NewLiteral::Typed(TypedLit::Float(val)))
+    pub fn lit_f(&self, val: f32) -> Expr {
+        Expr::Literal(Literal::Typed(TypedLit::Float(val)))
     }
 
-    pub fn lit_d(&self, val: f64) -> NewExpr {
-        NewExpr::Literal(NewLiteral::Typed(TypedLit::Double(val)))
+    pub fn lit_d(&self, val: f64) -> Expr {
+        Expr::Literal(Literal::Typed(TypedLit::Double(val)))
     }
 
-    pub fn lit_b(&self, val: bool) -> NewExpr {
-        NewExpr::Literal(NewLiteral::Typed(TypedLit::Bool(val)))
+    pub fn lit_b(&self, val: bool) -> Expr {
+        Expr::Literal(Literal::Typed(TypedLit::Bool(val)))
     }
 
-    pub fn id(&self, name: impl Into<String>) -> Result<NewExpr> {
+    pub fn id(&self, name: impl Into<String>) -> Result<Expr> {
         let name = name.into();
         match self.find_type(&name) {
             None => err!("unknown identifier: {}", name),
-            Some(typ) => Ok(NewExpr::Identifier(name, typ)),
+            Some(typ) => Ok(Expr::Identifier(name, typ)),
         }
     }
 
-    pub fn eq(&self, lhs: NewExpr, rhs: NewExpr) -> Result<NewExpr> {
+    pub fn eq(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
             err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
-            Ok(NewExpr::Binary(BinaryExpr::Eq(
-                Box::new(lhs),
-                Box::new(rhs),
-                BOOL,
-            )))
+            Ok(Expr::Binary(BinaryExpr::Eq(Box::new(lhs), Box::new(rhs))))
         }
     }
 
-    pub fn ne(&self, lhs: NewExpr, rhs: NewExpr) -> Result<NewExpr> {
+    pub fn ne(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
             err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
-            Ok(NewExpr::Binary(BinaryExpr::Ne(
-                Box::new(lhs),
-                Box::new(rhs),
-                BOOL,
-            )))
+            Ok(Expr::Binary(BinaryExpr::Ne(Box::new(lhs), Box::new(rhs))))
         }
     }
 
-    pub fn lt(&self, lhs: NewExpr, rhs: NewExpr) -> Result<NewExpr> {
+    pub fn lt(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
             err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
-            Ok(NewExpr::Binary(BinaryExpr::Lt(
-                Box::new(lhs),
-                Box::new(rhs),
-                BOOL,
-            )))
+            Ok(Expr::Binary(BinaryExpr::Lt(Box::new(lhs), Box::new(rhs))))
         }
     }
 
-    pub fn le(&self, lhs: NewExpr, rhs: NewExpr) -> Result<NewExpr> {
+    pub fn le(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
             err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
-            Ok(NewExpr::Binary(BinaryExpr::Le(
-                Box::new(lhs),
-                Box::new(rhs),
-                BOOL,
-            )))
+            Ok(Expr::Binary(BinaryExpr::Le(Box::new(lhs), Box::new(rhs))))
         }
     }
 
-    pub fn gt(&self, lhs: NewExpr, rhs: NewExpr) -> Result<NewExpr> {
+    pub fn gt(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
             err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
-            Ok(NewExpr::Binary(BinaryExpr::Gt(
-                Box::new(lhs),
-                Box::new(rhs),
-                BOOL,
-            )))
+            Ok(Expr::Binary(BinaryExpr::Gt(Box::new(lhs), Box::new(rhs))))
         }
     }
 
-    pub fn ge(&self, lhs: NewExpr, rhs: NewExpr) -> Result<NewExpr> {
+    pub fn ge(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
             err!("cannot compare {} and {}", lhs.get_type(), rhs.get_type())
         } else {
-            Ok(NewExpr::Binary(BinaryExpr::Ge(
-                Box::new(lhs),
-                Box::new(rhs),
-                BOOL,
-            )))
+            Ok(Expr::Binary(BinaryExpr::Ge(Box::new(lhs), Box::new(rhs))))
         }
     }
 
-    pub fn add(&self, lhs: NewExpr, rhs: NewExpr) -> Result<NewExpr> {
+    pub fn add(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
             err!("cannot add {} and {}", lhs.get_type(), rhs.get_type())
         } else {
-            Ok(NewExpr::Binary(BinaryExpr::Add(
-                Box::new(lhs),
-                Box::new(rhs),
-            )))
+            Ok(Expr::Binary(BinaryExpr::Add(Box::new(lhs), Box::new(rhs))))
         }
     }
 
-    pub fn sub(&self, lhs: NewExpr, rhs: NewExpr) -> Result<NewExpr> {
+    pub fn sub(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
             err!("cannot subtract {} and {}", lhs.get_type(), rhs.get_type())
         } else {
-            Ok(NewExpr::Binary(BinaryExpr::Sub(
-                Box::new(lhs),
-                Box::new(rhs),
-            )))
+            Ok(Expr::Binary(BinaryExpr::Sub(Box::new(lhs), Box::new(rhs))))
         }
     }
 
-    pub fn mul(&self, lhs: NewExpr, rhs: NewExpr) -> Result<NewExpr> {
+    pub fn mul(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
             err!("cannot multiply {} and {}", lhs.get_type(), rhs.get_type())
         } else {
-            Ok(NewExpr::Binary(BinaryExpr::Mul(
-                Box::new(lhs),
-                Box::new(rhs),
-            )))
+            Ok(Expr::Binary(BinaryExpr::Mul(Box::new(lhs), Box::new(rhs))))
         }
     }
 
-    pub fn div(&self, lhs: NewExpr, rhs: NewExpr) -> Result<NewExpr> {
+    pub fn div(&self, lhs: Expr, rhs: Expr) -> Result<Expr> {
         if lhs.get_type() != rhs.get_type() {
             err!("cannot divide {} and {}", lhs.get_type(), rhs.get_type())
         } else {
-            Ok(NewExpr::Binary(BinaryExpr::Div(
-                Box::new(lhs),
-                Box::new(rhs),
-            )))
+            Ok(Expr::Binary(BinaryExpr::Div(Box::new(lhs), Box::new(rhs))))
         }
     }
 
-    pub fn call(&self, name: impl Into<String>, params: Vec<NewExpr>) -> Result<NewExpr> {
+    pub fn call(&self, name: impl Into<String>, params: Vec<Expr>) -> Result<Expr> {
         let fn_name = name.into();
         if let Some(func) = self.state.lock().extern_funcs.get(&fn_name) {
             for ((i, t1), t2) in params.iter().enumerate().zip(func.params.iter()) {
@@ -544,7 +508,7 @@ impl<'a> CodeBlock<'a> {
                     );
                 }
             }
-            Ok(NewExpr::Call(fn_name, params, func.returns.unwrap_or(NIL)))
+            Ok(Expr::Call(fn_name, params, func.returns.unwrap_or(NIL)))
         } else {
             err!("No func with the name {} exist", fn_name)
         }

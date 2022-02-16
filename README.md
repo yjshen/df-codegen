@@ -11,7 +11,6 @@ I've just finished the proof of concept and will first try to accelerate row and
 ## Development
 
 TODOs:
-- [ ] Cleanup ret values for functions and relax the restrictions on the return type
 - [ ] Function register and reuse 
 - [ ] Hook JIT codegen with DataFusion `RuntimeEnv`
 - [ ] Support unsigned int types
