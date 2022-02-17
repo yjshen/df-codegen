@@ -22,6 +22,7 @@ use std::error;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::result;
+use arrow::error::ArrowError;
 
 /// Result type for operations that could result in an [DataFusionError]
 pub type Result<T> = result::Result<T, DataFusionError>;
@@ -33,6 +34,8 @@ pub type GenericError = Box<dyn error::Error + Send + Sync>;
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub enum DataFusionError {
+    /// Error returned by arrow.
+    ArrowError(ArrowError),
     /// Error associated to I/O operations and associated traits.
     IoError(io::Error),
     /// Error returned on a branch that we know it is possible
@@ -60,6 +63,16 @@ pub enum DataFusionError {
     JITError(ModuleError),
 }
 
+impl From<DataFusionError> for ArrowError {
+    fn from(e: DataFusionError) -> Self {
+        match e {
+            DataFusionError::ArrowError(e) => e,
+            DataFusionError::External(e) => ArrowError::ExternalError(e),
+            other => ArrowError::ExternalError(Box::new(other)),
+        }
+    }
+}
+
 impl From<io::Error> for DataFusionError {
     fn from(e: io::Error) -> Self {
         DataFusionError::IoError(e)
@@ -81,6 +94,7 @@ impl From<GenericError> for DataFusionError {
 impl Display for DataFusionError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match *self {
+            DataFusionError::ArrowError(ref desc) => write!(f, "Arrow error: {}", desc),
             DataFusionError::IoError(ref desc) => write!(f, "IO error: {}", desc),
             DataFusionError::NotImplemented(ref desc) => {
                 write!(f, "This feature is not implemented: {}", desc)
