@@ -44,7 +44,7 @@ pub fn read_as_batch(data: &[u8], schema: Arc<Schema>, offsets: Vec<usize>) -> R
 
 /// Read `data` of raw-bytes rows starting at `offsets` out to a record batch
 pub fn read_as_batch_jit(
-    data: &mut [u8],
+    data: &[u8],
     schema: Arc<Schema>,
     offsets: Vec<usize>,
     assembler: &Assembler,
@@ -301,7 +301,7 @@ fn fn_name<T>(f: T) -> &'static str {
     // Find and cut the rest of the path
     match &name.rfind(':') {
         Some(pos) => &name[pos + 1..name.len()],
-        None => &name,
+        None => name,
     }
 }
 
@@ -337,7 +337,7 @@ fn register_read_functions(asm: &Assembler) -> Result<()> {
     reg_fn!(asm, read_field_date32_nf, reader_param.clone(), None);
     reg_fn!(asm, read_field_date64_nf, reader_param.clone(), None);
     reg_fn!(asm, read_field_utf8_nf, reader_param.clone(), None);
-    reg_fn!(asm, read_field_binary_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_binary_nf, reader_param, None);
     Ok(())
 }
 

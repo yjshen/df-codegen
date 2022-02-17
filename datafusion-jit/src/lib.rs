@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+//! Just-In-Time compilation to accelerate DataFusion physical plan execution.
+
 #![allow(dead_code)]
 pub mod api;
 pub mod ast;

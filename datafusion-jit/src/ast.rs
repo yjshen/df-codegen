@@ -19,15 +19,22 @@ use cranelift::codegen::ir;
 use std::fmt::{Display, Formatter};
 
 #[derive(Clone, Debug)]
+/// Statement
 pub enum Stmt {
+    /// if-then-else
     IfElse(Box<Expr>, Vec<Stmt>, Vec<Stmt>),
+    /// while
     WhileLoop(Box<Expr>, Vec<Stmt>),
+    /// assignment
     Assign(String, Box<Expr>),
+    /// call function for side effect
     Call(String, Vec<Expr>),
+    /// declare a new variable of type
     Declare(String, JITType),
 }
 
 #[derive(Copy, Clone, Debug)]
+/// Shorthand typed literals
 pub enum TypedLit {
     Bool(bool),
     Int(i64),
@@ -36,10 +43,15 @@ pub enum TypedLit {
 }
 
 #[derive(Clone, Debug)]
+/// Expression
 pub enum Expr {
+    /// literal
     Literal(Literal),
+    /// variable
     Identifier(String, JITType),
+    /// binary expression
     Binary(BinaryExpr),
+    /// call function expression
     Call(String, Vec<Expr>, JITType),
 }
 
@@ -92,73 +104,99 @@ impl BinaryExpr {
 }
 
 #[derive(Clone, Debug)]
+/// Binary expression
 pub enum BinaryExpr {
+    /// ==
     Eq(Box<Expr>, Box<Expr>),
+    /// !=
     Ne(Box<Expr>, Box<Expr>),
+    /// <
     Lt(Box<Expr>, Box<Expr>),
+    /// <=
     Le(Box<Expr>, Box<Expr>),
+    /// >
     Gt(Box<Expr>, Box<Expr>),
+    /// >=
     Ge(Box<Expr>, Box<Expr>),
+    /// add
     Add(Box<Expr>, Box<Expr>),
+    /// subtract
     Sub(Box<Expr>, Box<Expr>),
+    /// multiply
     Mul(Box<Expr>, Box<Expr>),
+    /// divide
     Div(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Clone, Debug)]
+/// Literal
 pub enum Literal {
+    /// Parsable literal with type
     Parsing(String, JITType),
+    /// Shorthand literals of common types
     Typed(TypedLit),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
+/// Type to be used in JIT
 pub struct JITType {
+    /// The cranelift type
     pub(crate) native: ir::Type,
     /// re-expose inner field of `ir::Type` out for easier pattern matching
     pub(crate) code: u8,
 }
 
+/// null type as placeholder
 pub const NIL: JITType = JITType {
     native: ir::types::INVALID,
     code: 0,
 };
+/// bool
 pub const BOOL: JITType = JITType {
     native: ir::types::B1,
     code: 0x70,
 };
+/// integer of 1 byte
 pub const I8: JITType = JITType {
     native: ir::types::I8,
     code: 0x76,
 };
+/// integer of 2 bytes
 pub const I16: JITType = JITType {
     native: ir::types::I16,
     code: 0x77,
 };
+/// integer of 4 bytes
 pub const I32: JITType = JITType {
     native: ir::types::I32,
     code: 0x78,
 };
+/// integer of 8 bytes
 pub const I64: JITType = JITType {
     native: ir::types::I64,
     code: 0x79,
 };
+/// Ieee float of 32 bits
 pub const F32: JITType = JITType {
     native: ir::types::F32,
     code: 0x7b,
 };
+/// Ieee float of 64 bits
 pub const F64: JITType = JITType {
     native: ir::types::F64,
     code: 0x7c,
 };
+/// Pointer type of 32 bits
 pub const R32: JITType = JITType {
     native: ir::types::R32,
     code: 0x7e,
 };
+/// Pointer type of 64 bits
 pub const R64: JITType = JITType {
     native: ir::types::R64,
     code: 0x7f,
 };
-
+/// The pointer type to use based on our currently target.
 pub const PTR: JITType = if std::mem::size_of::<usize>() == 8 {
     R64
 } else {

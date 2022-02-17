@@ -46,6 +46,7 @@
 //! └──────────┴──────────┴──────────────────────┴──────────────┴──────────────────────┴───────────────────────┴──────────┘
 //! 0          1          2                     10              14                     22                     31         32
 //!
+#![allow(dead_code)]
 
 use arrow::datatypes::{DataType, Schema};
 use arrow::util::bit_util::{get_bit_raw, round_upto_power_of_2};
@@ -293,7 +294,7 @@ mod tests {
                     let mut vector = vec![0; 1024];
                     let row_offsets =
                         { write_batch_unchecked(&mut vector, 0, &batch, 0, schema.clone()) };
-                    let output_batch = { read_as_batch(&mut vector, schema.clone(), row_offsets.clone())? };
+                    let output_batch = { read_as_batch(&vector, schema.clone(), row_offsets.clone())? };
                     assert_eq!(batch, output_batch);
                     Ok(())
                 }
@@ -308,7 +309,7 @@ mod tests {
                     let row_offsets =
                         { write_batch_unchecked(&mut vector, 0, &batch, 0, schema.clone()) };
                     let assembler = Assembler::default();
-                    let output_batch = { read_as_batch_jit(&mut vector, schema, row_offsets, &assembler)? };
+                    let output_batch = { read_as_batch_jit(&vector, schema, row_offsets, &assembler)? };
                     assert_eq!(batch, output_batch);
                     Ok(())
                 }
@@ -409,7 +410,7 @@ mod tests {
         let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(a)])?;
         let mut vector = vec![0; 8192];
         let row_offsets = { write_batch_unchecked(&mut vector, 0, &batch, 0, schema.clone()) };
-        let output_batch = { read_as_batch(&mut vector, schema, row_offsets)? };
+        let output_batch = { read_as_batch(&vector, schema, row_offsets)? };
         assert_eq!(batch, output_batch);
         Ok(())
     }
@@ -424,7 +425,7 @@ mod tests {
         let mut vector = vec![0; 8192];
         let row_offsets = { write_batch_unchecked(&mut vector, 0, &batch, 0, schema.clone()) };
         let assembler = Assembler::default();
-        let output_batch = { read_as_batch_jit(&mut vector, schema, row_offsets, &assembler)? };
+        let output_batch = { read_as_batch_jit(&vector, schema, row_offsets, &assembler)? };
         assert_eq!(batch, output_batch);
         Ok(())
     }
@@ -447,8 +448,8 @@ mod tests {
             DataType::Decimal(5, 2),
             false,
         )]));
-        let mut vector = vec![0; 1024];
+        let vector = vec![0; 1024];
         let row_offsets = vec![0];
-        read_as_batch(&mut vector, schema, row_offsets).unwrap();
+        read_as_batch(&vector, schema, row_offsets).unwrap();
     }
 }
