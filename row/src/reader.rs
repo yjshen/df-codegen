@@ -286,103 +286,58 @@ fn get_array(batch: &mut MutableRecordBatch, col_idx: usize) -> &mut Box<dyn Arr
     &mut arrays[col_idx]
 }
 
-fn register_read_functions(assembler: &Assembler) -> Result<()> {
-    assembler.register_extern_fn(
-        "get_array",
-        get_array as *const u8,
-        vec![PTR, I64],
-        Some(PTR),
-    )?;
-    assembler.register_extern_fn(
-        "read_field_bool",
-        read_field_bool as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_u8",
-        read_field_u8 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_u16",
-        read_field_u16 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_u32",
-        read_field_u32 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_u64",
-        read_field_u64 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_i8",
-        read_field_i8 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_i16",
-        read_field_i16 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_i32",
-        read_field_i32 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_i64",
-        read_field_i64 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_f32",
-        read_field_f32 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_f64",
-        read_field_f64 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_date32",
-        read_field_date32 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_date64",
-        read_field_date64 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_utf8",
-        read_field_utf8 as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
-    assembler.register_extern_fn(
-        "read_field_binary",
-        read_field_binary as *const u8,
-        vec![PTR, I64, PTR],
-        None,
-    )?;
+macro_rules! reg_fn {
+    ($ASS:ident, $FN: ident, $PARAM: expr, $RET: expr) => {
+        $ASS.register_extern_fn(fn_name($FN), $FN as *const u8, $PARAM, $RET)?;
+    };
+}
+
+fn fn_name<T>(f: T) -> &'static str {
+    fn type_name_of<T>(_: T) -> &'static str {
+        std::any::type_name::<T>()
+    }
+    let name = type_name_of(f);
+
+    // Find and cut the rest of the path
+    match &name.rfind(':') {
+        Some(pos) => &name[pos + 1..name.len()],
+        None => &name,
+    }
+}
+
+fn register_read_functions(asm: &Assembler) -> Result<()> {
+    let reader_param = vec![PTR, I64, PTR];
+    reg_fn!(asm, get_array, vec![PTR, I64], Some(PTR));
+    reg_fn!(asm, read_field_bool, reader_param.clone(), None);
+    reg_fn!(asm, read_field_u8, reader_param.clone(), None);
+    reg_fn!(asm, read_field_u16, reader_param.clone(), None);
+    reg_fn!(asm, read_field_u32, reader_param.clone(), None);
+    reg_fn!(asm, read_field_u64, reader_param.clone(), None);
+    reg_fn!(asm, read_field_i8, reader_param.clone(), None);
+    reg_fn!(asm, read_field_i16, reader_param.clone(), None);
+    reg_fn!(asm, read_field_i32, reader_param.clone(), None);
+    reg_fn!(asm, read_field_i64, reader_param.clone(), None);
+    reg_fn!(asm, read_field_f32, reader_param.clone(), None);
+    reg_fn!(asm, read_field_f64, reader_param.clone(), None);
+    reg_fn!(asm, read_field_date32, reader_param.clone(), None);
+    reg_fn!(asm, read_field_date64, reader_param.clone(), None);
+    reg_fn!(asm, read_field_utf8, reader_param.clone(), None);
+    reg_fn!(asm, read_field_binary, reader_param.clone(), None);
+    reg_fn!(asm, read_field_bool_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_u8_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_u16_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_u32_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_u64_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_i8_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_i16_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_i32_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_i64_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_f32_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_f64_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_date32_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_date64_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_utf8_nf, reader_param.clone(), None);
+    reg_fn!(asm, read_field_binary_nf, reader_param.clone(), None);
     Ok(())
 }
 
@@ -402,27 +357,47 @@ fn gen_read_row(schema: &Arc<Schema>, assembler: &Assembler) -> Result<*const u8
             b.call("get_array", vec![b.id("batch")?, b.lit_i(i as i64)])?,
         )?;
         let params = vec![b.id(&arr)?, b.lit_i(i as i64), b.id("row")?];
-        match dt {
-            Boolean => b.call_stmt("read_field_bool", params)?,
-            UInt8 => b.call_stmt("read_field_u8", params)?,
-            UInt16 => b.call_stmt("read_field_u16", params)?,
-            UInt32 => b.call_stmt("read_field_u32", params)?,
-            UInt64 => b.call_stmt("read_field_u64", params)?,
-            Int8 => b.call_stmt("read_field_i8", params)?,
-            Int16 => b.call_stmt("read_field_i16", params)?,
-            Int32 => b.call_stmt("read_field_i32", params)?,
-            Int64 => b.call_stmt("read_field_i64", params)?,
-            Float32 => b.call_stmt("read_field_f32", params)?,
-            Float64 => b.call_stmt("read_field_f64", params)?,
-            Date32 => b.call_stmt("read_field_date32", params)?,
-            Date64 => b.call_stmt("read_field_date64", params)?,
-            Utf8 => b.call_stmt("read_field_utf8", params)?,
-            Binary => b.call_stmt("read_field_binary", params)?,
-            _ => unimplemented!(),
+        if f.is_nullable() {
+            match dt {
+                Boolean => b.call_stmt("read_field_bool", params)?,
+                UInt8 => b.call_stmt("read_field_u8", params)?,
+                UInt16 => b.call_stmt("read_field_u16", params)?,
+                UInt32 => b.call_stmt("read_field_u32", params)?,
+                UInt64 => b.call_stmt("read_field_u64", params)?,
+                Int8 => b.call_stmt("read_field_i8", params)?,
+                Int16 => b.call_stmt("read_field_i16", params)?,
+                Int32 => b.call_stmt("read_field_i32", params)?,
+                Int64 => b.call_stmt("read_field_i64", params)?,
+                Float32 => b.call_stmt("read_field_f32", params)?,
+                Float64 => b.call_stmt("read_field_f64", params)?,
+                Date32 => b.call_stmt("read_field_date32", params)?,
+                Date64 => b.call_stmt("read_field_date64", params)?,
+                Utf8 => b.call_stmt("read_field_utf8", params)?,
+                Binary => b.call_stmt("read_field_binary", params)?,
+                _ => unimplemented!(),
+            }
+        } else {
+            match dt {
+                Boolean => b.call_stmt("read_field_bool_nf", params)?,
+                UInt8 => b.call_stmt("read_field_u8_nf", params)?,
+                UInt16 => b.call_stmt("read_field_u16_nf", params)?,
+                UInt32 => b.call_stmt("read_field_u32_nf", params)?,
+                UInt64 => b.call_stmt("read_field_u64_nf", params)?,
+                Int8 => b.call_stmt("read_field_i8_nf", params)?,
+                Int16 => b.call_stmt("read_field_i16_nf", params)?,
+                Int32 => b.call_stmt("read_field_i32_nf", params)?,
+                Int64 => b.call_stmt("read_field_i64_nf", params)?,
+                Float32 => b.call_stmt("read_field_f32_nf", params)?,
+                Float64 => b.call_stmt("read_field_f64_nf", params)?,
+                Date32 => b.call_stmt("read_field_date32_nf", params)?,
+                Date64 => b.call_stmt("read_field_date64_nf", params)?,
+                Utf8 => b.call_stmt("read_field_utf8_nf", params)?,
+                Binary => b.call_stmt("read_field_binary_nf", params)?,
+                _ => unimplemented!(),
+            }
         }
     }
     let gen_func = b.build();
-    println!("{}", gen_func);
     let mut jit = assembler.create_jit();
     let code_ptr = jit.compile(gen_func)?;
     Ok(code_ptr)

@@ -287,17 +287,29 @@ mod tests {
                 #[test]
                 #[allow(non_snake_case)]
                 fn [<test_single_ $TYPE>]() -> Result<()> {
-                    let schema = Arc::new(Schema::new(vec![Field::new("a", $TYPE, false)]));
+                    let schema = Arc::new(Schema::new(vec![Field::new("a", $TYPE, true)]));
                     let a = $ARRAY::from($VEC);
                     let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(a)])?;
                     let mut vector = vec![0; 1024];
                     let row_offsets =
                         { write_batch_unchecked(&mut vector, 0, &batch, 0, schema.clone()) };
                     let output_batch = { read_as_batch(&mut vector, schema.clone(), row_offsets.clone())? };
-                    let assembler = Assembler::default();
-                    let output_batch2 = { read_as_batch_jit(&mut vector, schema, row_offsets, &assembler)? };
                     assert_eq!(batch, output_batch);
-                    assert_eq!(batch, output_batch2);
+                    Ok(())
+                }
+
+                #[test]
+                #[allow(non_snake_case)]
+                fn [<test_single_ $TYPE _jit>]() -> Result<()> {
+                    let schema = Arc::new(Schema::new(vec![Field::new("a", $TYPE, true)]));
+                    let a = $ARRAY::from($VEC);
+                    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(a)])?;
+                    let mut vector = vec![0; 1024];
+                    let row_offsets =
+                        { write_batch_unchecked(&mut vector, 0, &batch, 0, schema.clone()) };
+                    let assembler = Assembler::default();
+                    let output_batch = { read_as_batch_jit(&mut vector, schema, row_offsets, &assembler)? };
+                    assert_eq!(batch, output_batch);
                     Ok(())
                 }
             }
@@ -390,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_single_binary() -> Result<()> {
-        let schema = Arc::new(Schema::new(vec![Field::new("a", Binary, false)]));
+        let schema = Arc::new(Schema::new(vec![Field::new("a", Binary, true)]));
         let values: Vec<Option<&[u8]>> =
             vec![Some(b"one"), Some(b"two"), None, Some(b""), Some(b"three")];
         let a = BinaryArray::from_opt_vec(values);
@@ -398,6 +410,21 @@ mod tests {
         let mut vector = vec![0; 8192];
         let row_offsets = { write_batch_unchecked(&mut vector, 0, &batch, 0, schema.clone()) };
         let output_batch = { read_as_batch(&mut vector, schema, row_offsets)? };
+        assert_eq!(batch, output_batch);
+        Ok(())
+    }
+
+    #[test]
+    fn test_single_binary_jit() -> Result<()> {
+        let schema = Arc::new(Schema::new(vec![Field::new("a", Binary, true)]));
+        let values: Vec<Option<&[u8]>> =
+            vec![Some(b"one"), Some(b"two"), None, Some(b""), Some(b"three")];
+        let a = BinaryArray::from_opt_vec(values);
+        let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(a)])?;
+        let mut vector = vec![0; 8192];
+        let row_offsets = { write_batch_unchecked(&mut vector, 0, &batch, 0, schema.clone()) };
+        let assembler = Assembler::default();
+        let output_batch = { read_as_batch_jit(&mut vector, schema, row_offsets, &assembler)? };
         assert_eq!(batch, output_batch);
         Ok(())
     }
