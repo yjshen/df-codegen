@@ -17,12 +17,12 @@
 
 //! DataFusion error types
 
+use arrow::error::ArrowError;
 use cranelift_module::ModuleError;
 use std::error;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::result;
-use arrow::error::ArrowError;
 
 /// Result type for operations that could result in an [DataFusionError]
 pub type Result<T> = result::Result<T, DataFusionError>;
@@ -61,6 +61,12 @@ pub enum DataFusionError {
     External(GenericError),
     /// Error occurs during code generation
     JITError(ModuleError),
+}
+
+impl From<ArrowError> for DataFusionError {
+    fn from(e: ArrowError) -> Self {
+        DataFusionError::ArrowError(e)
+    }
 }
 
 impl From<DataFusionError> for ArrowError {

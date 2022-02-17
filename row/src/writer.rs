@@ -42,8 +42,7 @@ pub fn write_batch_unchecked(
     for cur_row in row_idx..batch.num_rows() {
         offsets.push(current_offset);
         let row_width = write_row(&mut writer, cur_row, batch);
-        output[current_offset..current_offset + row_width]
-            .copy_from_slice(writer.get_row());
+        output[current_offset..current_offset + row_width].copy_from_slice(writer.get_row());
         current_offset += row_width;
         writer.reset()
     }

@@ -192,12 +192,14 @@ fn supported(schema: &Arc<Schema>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion_jit::error::Result;
     use crate::reader::read_as_batch;
+    use crate::reader::read_as_batch_jit;
     use crate::writer::write_batch_unchecked;
     use arrow::record_batch::RecordBatch;
     use arrow::util::bit_util::{ceil, set_bit_raw, unset_bit_raw};
     use arrow::{array::*, datatypes::*};
+    use datafusion_jit::api::Assembler;
+    use datafusion_jit::error::*;
     use rand::Rng;
     use DataType::*;
 
@@ -291,8 +293,11 @@ mod tests {
                     let mut vector = vec![0; 1024];
                     let row_offsets =
                         { write_batch_unchecked(&mut vector, 0, &batch, 0, schema.clone()) };
-                    let output_batch = { read_as_batch(&mut vector, schema, row_offsets)? };
+                    let output_batch = { read_as_batch(&mut vector, schema.clone(), row_offsets.clone())? };
+                    let assembler = Assembler::default();
+                    let output_batch2 = { read_as_batch_jit(&mut vector, schema, row_offsets, &assembler)? };
                     assert_eq!(batch, output_batch);
+                    assert_eq!(batch, output_batch2);
                     Ok(())
                 }
             }
@@ -391,8 +396,7 @@ mod tests {
         let a = BinaryArray::from_opt_vec(values);
         let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(a)])?;
         let mut vector = vec![0; 8192];
-        let row_offsets =
-            { write_batch_unchecked(&mut vector, 0, &batch, 0, schema.clone()) };
+        let row_offsets = { write_batch_unchecked(&mut vector, 0, &batch, 0, schema.clone()) };
         let output_batch = { read_as_batch(&mut vector, schema, row_offsets)? };
         assert_eq!(batch, output_batch);
         Ok(())

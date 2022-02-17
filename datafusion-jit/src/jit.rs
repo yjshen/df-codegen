@@ -1,5 +1,5 @@
 use crate::api::GeneratedFunction;
-use crate::ast::{BinaryExpr, Expr, JITType, Literal, Stmt, TypedLit, BOOL, I64};
+use crate::ast::{BinaryExpr, Expr, JITType, Literal, Stmt, TypedLit, BOOL, I64, NIL};
 use crate::error::{DataFusionError, Result};
 use crate::internal_err;
 use cranelift::prelude::*;
@@ -214,8 +214,8 @@ impl<'a> FunctionTranslator<'a> {
                 self.translate_while_loop(*condition, loop_body)
             }
             Stmt::Assign(name, expr) => self.translate_assign(name, *expr),
-            Stmt::SideEffect(expr) => {
-                self.translate_expr(*expr)?;
+            Stmt::Call(name, args) => {
+                self.translate_call_stmt(name, args, NIL)?;
                 Ok(())
             }
             Stmt::Declare(_, _) => Ok(()),
@@ -245,7 +245,7 @@ impl<'a> FunctionTranslator<'a> {
                 Ok(self.builder.use_var(*variable))
             }
             Expr::Binary(b) => self.translate_binary_expr(b),
-            Expr::Call(name, args, ret) => self.translate_call(name, args, ret),
+            Expr::Call(name, args, ret) => self.translate_call_expr(name, args, ret),
         }
     }
 
@@ -502,7 +502,12 @@ impl<'a> FunctionTranslator<'a> {
         Ok(())
     }
 
-    fn translate_call(&mut self, name: String, args: Vec<Expr>, ret: JITType) -> Result<Value> {
+    fn translate_call_expr(
+        &mut self,
+        name: String,
+        args: Vec<Expr>,
+        ret: JITType,
+    ) -> Result<Value> {
         let mut sig = self.module.make_signature();
 
         // Add a parameter for each argument.
@@ -510,7 +515,14 @@ impl<'a> FunctionTranslator<'a> {
             sig.params.push(AbiParam::new(arg.get_type().native));
         }
 
-        sig.returns.push(AbiParam::new(ret.native));
+        if ret.code == 0 {
+            return internal_err!(
+                "Call function {}(..) has void type, it can not be an expression",
+                &name
+            );
+        } else {
+            sig.returns.push(AbiParam::new(ret.native));
+        }
 
         let callee = self
             .module
@@ -524,6 +536,32 @@ impl<'a> FunctionTranslator<'a> {
         }
         let call = self.builder.ins().call(local_callee, &arg_values);
         Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn translate_call_stmt(&mut self, name: String, args: Vec<Expr>, ret: JITType) -> Result<()> {
+        let mut sig = self.module.make_signature();
+
+        // Add a parameter for each argument.
+        for arg in &args {
+            sig.params.push(AbiParam::new(arg.get_type().native));
+        }
+
+        if ret.code != 0 {
+            sig.returns.push(AbiParam::new(ret.native));
+        }
+
+        let callee = self
+            .module
+            .declare_function(&name, Linkage::Import, &sig)
+            .expect("problem declaring function");
+        let local_callee = self.module.declare_func_in_func(callee, self.builder.func);
+
+        let mut arg_values = Vec::new();
+        for arg in args {
+            arg_values.push(self.translate_expr(arg)?)
+        }
+        let _ = self.builder.ins().call(local_callee, &arg_values);
+        Ok(())
     }
 
     fn translate_global_data_addr(&mut self, name: String) -> Value {

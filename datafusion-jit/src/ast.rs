@@ -6,7 +6,7 @@ pub enum Stmt {
     IfElse(Box<Expr>, Vec<Stmt>, Vec<Stmt>),
     WhileLoop(Box<Expr>, Vec<Stmt>),
     Assign(String, Box<Expr>),
-    SideEffect(Box<Expr>),
+    Call(String, Vec<Expr>),
     Declare(String, JITType),
 }
 
@@ -142,6 +142,12 @@ pub const R64: JITType = JITType {
     code: 0x7f,
 };
 
+pub const PTR: JITType = if std::mem::size_of::<usize>() == 8 {
+    R64
+} else {
+    R32
+};
+
 impl Stmt {
     /// print the statement with indentation
     pub fn fmt_ident(&self, ident: usize, f: &mut Formatter) -> std::fmt::Result {
@@ -171,8 +177,17 @@ impl Stmt {
             Stmt::Assign(name, expr) => {
                 writeln!(f, "{}{} = {};", ident_str, name, expr)
             }
-            Stmt::SideEffect(expr) => {
-                writeln!(f, "{}{};", ident_str, expr)
+            Stmt::Call(name, args) => {
+                writeln!(
+                    f,
+                    "{}{}({});",
+                    ident_str,
+                    name,
+                    args.iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
             Stmt::Declare(name, ty) => {
                 writeln!(f, "{}let {}: {};", ident_str, name, ty)

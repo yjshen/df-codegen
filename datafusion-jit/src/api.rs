@@ -311,8 +311,8 @@ impl<'a> CodeBlock<'a> {
         }
     }
 
-    pub fn run_expr(&mut self, expr: Expr) -> Result<()> {
-        self.stmts.push(Stmt::SideEffect(Box::new(expr)));
+    pub fn call_stmt(&mut self, name: impl Into<String>, args: Vec<Expr>) -> Result<()> {
+        self.stmts.push(Stmt::Call(name.into(), args));
         Ok(())
     }
 
